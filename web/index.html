@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#12253c">
+  <title>AI Gateway Playground</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/demo_content.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar">
+    <strong>AI Gateway Playground</strong>
+    <div class="header-actions"><button id="open-reset" class="reset-button" type="button" aria-haspopup="dialog" disabled>Reset</button><button id="open-help" class="help-button" type="button" aria-label="Help" title="Help" aria-haspopup="dialog">?</button></div>
+  </header>
+  <section id="locked" class="locked" hidden>
+    <h1>Open the playground</h1>
+    <p>Run <code>pwsh .\scripts\start-presenter.ps1</code> on this PC.</p>
+    <p id="lock-error" role="alert"></p>
+  </section>
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar">
+      <nav id="steps" aria-label="Playground pages"></nav>
+    </aside>
+    <main id="main" tabindex="-1">
+      <div class="context-strip">
+        <span><small>AI Gateway</small><b id="sku-label"></b></span>
+        <span><small>Foundry</small><b id="model-label"></b></span>
+      </div>
+      <p id="reset-status" class="banner" role="status" hidden></p>
+      <section class="step-heading">
+        <div><p id="step-count" class="eyebrow"></p><h1 id="step-title"></h1><p id="step-description" class="lead"></p></div>
+        <span id="step-status" class="status not-run" hidden>Not run</span>
+      </section>
+      <nav id="step-links" class="resource-links" aria-label="Related Azure resources"></nav>
+      <div class="page-toolbar">
+        <div class="view-tabs" role="tablist" aria-label="Page view">
+          <button id="demo-tab" role="tab" aria-selected="true" aria-controls="demo-view" type="button">Experiment</button>
+          <button id="reference-tab" role="tab" aria-selected="false" aria-controls="reference-view" type="button">Reference</button>
+        </div>
+        <button id="run-step" class="primary" type="button">Run</button>
+      </div>
+      <div id="demo-view" role="tabpanel" aria-labelledby="demo-tab">
+      <div id="busy-banner" class="banner" role="status" hidden></div>
+      <section id="orientation" hidden>
+        <article class="environment">
+          <h2>One owned environment</h2>
+          <p>The template creates a Foundry account, three model deployments, AI Gateway Consumption, and monitoring resources for this playground.</p>
+          <p>The Python app runs locally over HTTPS. It sends prepared requests through the gateway and displays their recorded evidence.</p>
+          <h3>Experiment path</h3>
+          <ol class="experiment-path">
+            <li>Check model access with valid and rejected credentials.</li>
+            <li>Route one alias across three models with weights and priorities.</li>
+            <li>Test a request limit without blocking the normal alias.</li>
+            <li>Call the model through an OpenAPI-generated MCP tool.</li>
+            <li>Inspect native request spans, token counters, and estimated model cost.</li>
+          </ol>
+          <p>Run Check Setup after configuration. Reset clears local evidence and restores weighted routing; it does not delete resources or logs.</p>
+        </article>
+      </section>
+      <section id="resource-panel" hidden>
+        <div id="resource-grid" class="resource-grid"></div>
+      </section>
+      <section id="routing-panel" class="routing-panel" aria-labelledby="routing-title" hidden>
+        <div class="routing-modes" role="group" aria-label="Routing mode">
+          <button id="routing-weighted" type="button" aria-pressed="true">Weights</button>
+          <button id="routing-priority" type="button" aria-pressed="false">Priorities</button>
+        </div>
+        <p id="routing-applied" class="routing-applied"></p>
+        <h2 id="routing-title">Configuration for the next run</h2>
+        <p id="routing-description"></p>
+        <table><thead><tr><th scope="col">Model</th><th scope="col">Priority</th><th scope="col">Weight</th></tr></thead><tbody id="routing-plan"></tbody></table>
+      </section>
+      <div id="execution-overview">
+      <section id="result-panel" aria-labelledby="result-title" hidden>
+        <div class="result-heading"><h2 id="result-title">Results</h2><span id="result-time"></span></div>
+        <div id="result-empty" class="empty">Select Run to start.</div>
+        <div id="result-cards" class="result-cards"></div>
+        <div id="result-message" class="result-message" role="status" aria-live="polite"></div>
+      </section>
+      <section id="cost-panel" class="evidence-panel" aria-labelledby="cost-title" hidden>
+        <h2 id="cost-title">Gateway-estimated model cost</h2>
+        <p id="cost-notice" class="hint"></p>
+        <div class="table-scroll"><table class="evidence-table"><thead><tr><th scope="col">Alias</th><th scope="col">Returned model</th><th scope="col">Input cost</th><th scope="col">Output cost</th><th scope="col">Total cost</th></tr></thead><tbody id="cost-models"></tbody></table></div>
+        <p class="hint">Source: <code>azure.ai_gateway.client.token.cost</code>. Currency comes from the native metric. Total-token values take precedence over overlapping detail series.</p>
+      </section>
+      <section id="stage-panel" class="evidence-panel" aria-labelledby="stages-title" hidden>
+        <h2 id="stages-title">Execution stages</h2>
+        <div class="table-scroll"><table class="evidence-table"><thead><tr><th scope="col">Stage</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Details</th></tr></thead><tbody id="stage-results"></tbody></table></div>
+      </section>
+      <section id="monitoring-panel" class="monitoring-grid" aria-label="Monitoring capabilities" hidden>
+        <article class="monitoring-card"><h2>Requests and latency</h2><p>Inspect native Server spans in <code>OTelSpans</code> for timing, status, and trace correlation.</p><p>Use Application Insights or Workspace Logs.</p></article>
+        <article class="monitoring-card"><h2>Tokens and model cost</h2><p>Read native token counters and the cost estimates recorded by AI Gateway.</p><p>Open Token usage for the alias/model breakdown. Cumulative counters are not billing-period totals.</p></article>
+        <article class="monitoring-card"><h2>Policy outcomes</h2><p>Use AI Gateway monitoring for model traffic and policy outcomes.</p><p>Inspect expected credential and request-limit rejections in the local request history.</p></article>
+        <article class="monitoring-card"><h2>Audit and conversations</h2><p>Use the Azure activity log for resource changes.</p><p>Cloud payload capture is configurable and defaults to off. Check its setting, access, and retention before enabling it. The local request viewer is separate.</p></article>
+      </section>
+      </div>
+      <dialog id="reset-dialog" aria-labelledby="reset-title">
+        <h2 id="reset-title">Reset playground?</h2>
+        <p>Clear local results and request history.</p>
+        <p>Restore the routing alias to weights <strong>50 / 30 / 20</strong> at priority <strong>0</strong>.</p>
+        <p>Keep Azure resources and stored monitoring data unchanged, except for the routing configuration above.</p>
+        <p class="hint">Allow 30 seconds for routing configuration to propagate.</p>
+        <div class="reset-actions"><button id="cancel-reset" class="secondary compact" type="button" autofocus>Cancel</button><button id="confirm-reset" class="primary compact" type="button">Reset</button></div>
+      </dialog>
+      <section id="exchange-panel" class="evidence-panel" aria-labelledby="exchanges-title" hidden>
+        <div class="evidence-heading"><h2 id="exchanges-title">Request and response</h2><button id="follow-latest" class="secondary compact" type="button">Latest request</button></div>
+        <p id="capture-notice" class="hint"></p>
+        <label class="exchange-picker" for="exchange-select">Request <select id="exchange-select"></select></label>
+        <div id="exchange-detail">
+          <dl id="exchange-facts" class="exchange-facts"></dl>
+          <div class="prompt-grid">
+            <article><h3 id="input-title">Input prompt</h3><div id="input-content" class="prompt-content"></div></article>
+            <article><h3 id="output-title">Model answer</h3><p id="response-validation" class="exchange-validation" hidden></p><div id="output-content" class="prompt-content answer-content"></div></article>
+          </div>
+          <details id="exchange-json" class="raw-exchange">
+          <summary>Full JSON and HTTP details</summary>
+          <div class="exchange-meta"><span id="exchange-target"></span><span id="exchange-duration"></span></div>
+          <p id="exchange-path" class="exchange-path"></p>
+          <div class="exchange-grid">
+            <article><h3>Request</h3><h4>Application headers</h4><pre id="request-headers"></pre><h4>Body</h4><pre id="request-body"></pre><p id="request-truncation" class="hint"></p></article>
+            <article><h3 id="response-title">Response</h3><h4>Headers</h4><pre id="response-headers"></pre><h4 id="response-body-label">Decoded body</h4><pre id="response-body"></pre><p id="response-truncation" class="hint"></p></article>
+          </div>
+          </details>
+          <details id="trace-evidence" class="trace-evidence"><summary>Trace and correlation</summary><code id="exchange-correlation"></code><div id="trace-links" class="resource-links"></div><details><summary>Trace lookup query</summary><pre id="trace-query"></pre></details><button id="copy-trace-query" class="secondary compact" type="button">Copy trace query</button><p id="trace-copy-status" class="hint" role="status"></p></details>
+        </div>
+        <details class="request-history-panel"><summary id="history-title">Request history</summary><div id="request-table-scroll" class="table-scroll request-history"><table class="evidence-table"><thead><tr><th scope="col">#</th><th scope="col">Operation</th><th scope="col">HTTP</th><th scope="col">Time</th><th scope="col">Returned model</th><th scope="col">Tokens</th></tr></thead><tbody id="request-history"></tbody></table></div></details>
+      </section>
+      <section id="technical-panel" class="technical-panel" aria-labelledby="technical-title">
+        <h2 id="technical-title"></h2>
+        <p id="technical-description"></p>
+        <div id="request-flow" class="request-flow" aria-label="Request path"></div>
+        <dl id="technical-facts" class="technical-facts"></dl>
+        <div id="configuration-snapshots"></div>
+      </section>
+      </div>
+      <section id="reference-view" role="tabpanel" aria-labelledby="reference-tab" hidden>
+        <p class="reference-date">Preview capabilities can change. Check the linked documentation and validate the configured deployment.</p>
+        <div id="reference-content"></div>
+      </section>
+      <footer class="step-footer">
+        <button id="previous" class="secondary" type="button">Previous</button>
+        <button id="next" class="secondary" type="button">Next</button>
+      </footer>
+    </main>
+  </div>
+  <dialog id="presenter-help" aria-labelledby="help-title">
+    <header class="help-heading"><h2 id="help-title">Help</h2><button id="close-help" class="secondary" type="button">Close</button></header>
+    <section>
+      <h3 id="help-step"></h3>
+      <p id="speaker-note"></p>
+      <p id="caution" class="caution"></p>
+    </section>
+    <details id="execution-detail" hidden>
+      <summary>Check details</summary>
+      <p id="execution-status"></p>
+      <pre id="execution-output"></pre>
+    </details>
+    <details>
+      <summary>Resource links and names</summary>
+      <div id="help-resources" class="help-resources"></div>
+      <p><a href="/api/runbook" download="PRESENTER-LIVE.md">Download resource links</a></p>
+      <p class="hint">The download contains private deployment identifiers.</p>
+    </details>
+    <details>
+      <summary>Connection and setup</summary>
+      <p id="identity-badge">Connecting</p>
+      <dl><dt>Azure CLI user</dt><dd id="operator-name"></dd><dt>Subscription</dt><dd id="operator-subscription"></dd><dt>Directory ID</dt><dd id="operator-tenant"></dd></dl>
+      <p>The server uses your Azure CLI user. Portal links use your browser account.</p>
+      <p>Gateway blades use the portal's selected gateway. Confirm its name under Resource links and names.</p>
+      <p>Model and MCP requests use gateway keys. The gateway connects to Foundry with managed identity.</p>
+      <p>Run the launcher again if browser authorization expires:</p>
+      <code>pwsh .\scripts\start-presenter.ps1</code>
+      <p class="hint">The server runs for eight hours. Browser authorization lasts two hours.</p>
+    </details>
+  </dialog>
+</body>
+</html>

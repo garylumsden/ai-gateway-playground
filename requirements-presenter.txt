@@ -1,0 +1,3 @@
+cryptography==50.0.2
+azure-monitor-opentelemetry-exporter==1.0.0b58
+opentelemetry-sdk==1.45.1

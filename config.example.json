@@ -1,0 +1,14 @@
+{
+  "subscriptionId": "<subscription-id>",
+  "location": "<azure-location>",
+  "resourceGroupName": "rg-ai-gateway-playground",
+  "deploymentName": "ai-gateway-playground",
+  "modelDeployments": [
+    {"name": "gpt-5.4", "model": "gpt-5.4", "version": "2026-03-05", "sku": "GlobalStandard", "capacity": 10},
+    {"name": "gpt-5.4-mini", "model": "gpt-5.4-mini", "version": "2026-03-17", "sku": "GlobalStandard", "capacity": 10},
+    {"name": "gpt-5.4-nano", "model": "gpt-5.4-nano", "version": "2026-03-17", "sku": "GlobalStandard", "capacity": 10}
+  ],
+  "model": "gpt-5.4",
+  "routingModels": ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
+  "allowNativeTokenGap": false
+}
