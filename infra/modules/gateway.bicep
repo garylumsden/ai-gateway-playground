@@ -60,7 +60,7 @@ resource models 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = 
 // The bundled Bicep catalog lacks this type; the public 2026-09-01-preview schema and ARM validate it.
 #disable-next-line BCP081
 resource gateway 'Microsoft.ApiManagement/aigateways@2026-09-01-preview' = {
-  name: 'aigw-playground-${suffix}'
+  name: 'aigw-play-${suffix}'
   location: location
   identity: {
     type: 'SystemAssigned'
