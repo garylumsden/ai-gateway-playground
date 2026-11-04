@@ -20,11 +20,18 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlencode, urlparse
 import uuid
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, ValidationError, field_validator
 from demo_events import EVENTS, recorded_stage
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVISION_API = "2026-09-01-preview"
 ASSET_API = "2026-05-01"
+TOOL_SERVER_API = "2026-09-01-preview"
+MCP_SOURCES = {
+    "learn": "Microsoft Learn public documentation (Microsoft-published, free, no backend authentication)",
+    "prices": "Microsoft Azure Retail Prices API (free, no backend authentication; public list prices)",
+}
+LEARN_MCP_URL = "https://learn.microsoft.com/api/mcp"
 MODEL_ALIAS = "playground-model"
 LIMITED_ALIAS = "playground-limited"
 ROUTING_ALIAS = "playground-routing"
@@ -174,21 +181,109 @@ class DemoError(Exception):
 class NativeTokenGap(DemoError):
     """Native records arrived, but the gateway reported zero model token usage."""
 
-def tool_model_result(result: dict) -> dict:
-    if result.get("isError"):
-        raise DemoError("The model tool returned an error.")
-    if isinstance(result.get("structuredContent"), dict):
-        payload = result["structuredContent"]
-    else:
-        texts = [
-            part["text"] for part in result.get("content", [])
-            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
-        ]
-        try:
-            payload = json.loads(texts[0].lstrip("\ufeff")) if texts else {}
-        except json.JSONDecodeError as error:
-            raise DemoError("The model tool did not return valid JSON.") from error
-    return Demo.model_result(200, payload)
+class PublicResponse(BaseModel):
+    model_config = ConfigDict(strict=True, extra="ignore")
+
+
+class McpInitialisation(PublicResponse):
+    protocolVersion: str = Field(min_length=1, max_length=32)
+
+
+class ToolInputSchema(PublicResponse):
+    # Tool schemas are service-defined JSON Schema, not executable instructions.
+    properties: dict[str, dict] = Field(default_factory=dict)
+    required: list[str] = Field(default_factory=list)
+
+
+class McpTool(PublicResponse):
+    name: str = Field(min_length=1, max_length=256)
+    inputSchema: ToolInputSchema
+
+
+class McpTools(PublicResponse):
+    tools: list[McpTool] = Field(min_length=1, max_length=32)
+    nextCursor: str | None = None
+
+
+class McpContent(PublicResponse):
+    type: str
+    text: str | None = Field(default=None, max_length=1024 * 1024)
+
+
+class McpToolResult(PublicResponse):
+    isError: bool = False
+    content: list[McpContent] = Field(default_factory=list, max_length=32)
+    # The selected public service owns the payload shape; validate it after the MCP envelope.
+    structuredContent: dict | None = None
+
+
+class LearnDocument(PublicResponse):
+    title: str = Field(min_length=1, max_length=2000)
+    content: str | None = Field(default=None, max_length=100000)
+    contentUrl: HttpUrl
+
+    @field_validator("contentUrl")
+    @classmethod
+    def public_document_url(cls, value: HttpUrl) -> HttpUrl:
+        if value.scheme != "https" or value.host != "learn.microsoft.com":
+            raise ValueError("A documentation result must use Microsoft Learn HTTPS.")
+        return value
+
+
+class LearnSearchResult(PublicResponse):
+    results: list[LearnDocument] = Field(min_length=1, max_length=10)
+
+
+class RetailPrice(PublicResponse):
+    currencyCode: str = Field(pattern=r"^[A-Z]{3}$")
+    retailPrice: float = Field(ge=0, allow_inf_nan=False)
+    unitPrice: float = Field(ge=0, allow_inf_nan=False)
+    tierMinimumUnits: float = Field(ge=0, allow_inf_nan=False)
+    armRegionName: str = Field(max_length=100)
+    serviceName: str = Field(max_length=200)
+    skuName: str = Field(max_length=200)
+    productName: str = Field(max_length=300)
+    meterName: str = Field(max_length=300)
+    unitOfMeasure: str = Field(min_length=1, max_length=100)
+    type: str = Field(max_length=100)
+    effectiveStartDate: str | None = Field(default=None, max_length=100)
+
+
+class RetailPrices(PublicResponse):
+    BillingCurrency: str = Field(pattern=r"^[A-Z]{3}$")
+    Items: list[RetailPrice] = Field(min_length=1, max_length=1000)
+    NextPageLink: HttpUrl | None
+    Count: int = Field(ge=1, le=1000)
+
+
+def retail_filter(location: str) -> str:
+    if not re.fullmatch(r"[a-z0-9]+", location):
+        raise DemoError("The retail price region must be an Azure location name.")
+    return (
+        "serviceName eq 'API Management' and "
+        f"armRegionName eq '{location}' and skuName eq 'Consumption'"
+    )
+
+
+def retail_openapi(location: str) -> dict:
+    return {
+        "openapi": "3.0.1",
+        "info": {"title": "Azure Retail Prices", "version": "1.0.0"},
+        "servers": [{"url": "https://prices.azure.com"}],
+        "security": [],
+        "paths": {"/api/retail/prices": {"get": {
+            "operationId": "get_azure_retail_prices",
+            "summary": "Read public Azure API Management Consumption list prices for the configured region.",
+            "parameters": [{
+                "name": "$filter", "in": "query", "required": True,
+                "schema": {"type": "string", "enum": [retail_filter(location)]},
+            }],
+            "responses": {"200": {
+                "description": "One page of public retail prices, with NextPageLink when more pages exist.",
+                "content": {"application/json": {"schema": {"type": "object"}}},
+            }},
+        }}},
+    }
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -1133,118 +1228,95 @@ class Demo:
         print(json.dumps(result, indent=2))
 
     def configure_mcp(self) -> None:
-        account = self.arm(self.foundry_id, version="2025-06-01")
-        backend_url = account["properties"]["endpoint"].rstrip("/")
-        parsed = urlparse(backend_url)
-        if (
-            parsed.scheme != "https" or not parsed.hostname
-            or not parsed.hostname.endswith((".cognitiveservices.azure.com", ".openai.azure.com", ".services.ai.azure.com"))
-            or parsed.username or parsed.password or parsed.port not in (None, 443)
-        ):
-            raise DemoError("Foundry returned an invalid model-tool endpoint.")
-        spec = {
-            "openapi": "3.0.1",
-            "info": {"title": "Playground model tools", "version": "1.0.0"},
-            "servers": [{"url": backend_url}],
-            "paths": {"/openai/v1/chat/completions": {"post": {
-                "operationId": "summarize_text",
-                "summary": "Summarize text with the playground's own model.",
-                "requestBody": {
-                    "required": True,
-                    "content": {"application/json": {"schema": {
-                        "type": "object", "required": ["model", "messages"],
-                        "properties": {
-                            "model": {"type": "string", "enum": [self.config["model"]]},
-                            "messages": {"type": "array", "minItems": 1, "maxItems": 1, "items": {
-                                "type": "object", "required": ["role", "content"],
-                                "properties": {
-                                    "role": {"type": "string", "enum": ["user"]},
-                                    "content": {"type": "string", "minLength": 1, "maxLength": 2000},
-                                },
-                            }},
-                            "max_completion_tokens": {"type": "integer", "minimum": 1, "maximum": 128, "default": 96},
-                            "reasoning_effort": {"type": "string", "enum": ["none"]},
-                        },
-                    }}},
-                },
-                "responses": {"200": {"description": "Model answer and token usage"}},
-            }}},
-        }
-        tool_id = self.workspace_id + "/toolServers/model-tools"
-        tool = self.arm(tool_id, "PUT", {"properties": {
-            "displayName": "Playground model tools", "type": "openApi", "accessState": "active",
-            "failureMode": "failClosed",
-            "subscriptionRequired": True,
-            "endpoints": [{
-                "id": "model", "namespace": "model", "kind": "openApi",
+        spec = retail_openapi(self.config["location"])
+        endpoints = {
+            "learn": {
+                "id": "learn", "kind": "mcp",
+                "mcp": {"url": LEARN_MCP_URL, "transport": "streamableHttp"},
+                "tools": ["microsoft_docs_search", "microsoft_docs_fetch"],
+            },
+            "prices": {
+                "id": "prices", "kind": "openApi",
                 "openApi": {"specSource": {
                     "type": "inline", "contentBase64": base64.b64encode(json.dumps(spec).encode()).decode(),
                 }},
-                "credentials": {
-                    "type": "managedIdentity",
-                    "managedIdentity": {"resource": "https://cognitiveservices.azure.com"},
-                },
-                "tools": ["summarize_text"], "required": True,
-            }],
-            "policies": [],
-        }})
-        if not tool.get("properties", {}).get("gatewayEndpoints"):
-            tool = self.arm(tool_id)
-        endpoints = tool.get("properties", {}).get("gatewayEndpoints", [])
-        if endpoints:
-            self.state["mcpEndpoint"] = runtime_endpoint(tool, "mcp", self.state["hostname"])
-        else:
-            self.state["mcpEndpoint"] = require_runtime_url(
-                f"https://{self.state['hostname']}/default/toolservers/model-tools/mcp",
-                self.state["hostname"],
-            )
-        self.state["mcpSource"] = "OpenAPI over the playground Foundry model with managed identity"
+                "tools": ["get_azure_retail_prices"],
+            },
+        }
+        for key in ("mcpEndpoint", "mcpSource", "mcpChecks", "mcpEndpoints"):
+            self.state.pop(key, None)
+        self.state["mcpEndpoints"] = {}
+        self.state["mcpSources"] = dict(MCP_SOURCES)
         self.save()
-        print("The MCP summarization tool uses the playground's own Foundry model and managed identity.")
+        for name, endpoint in endpoints.items():
+            self.configure_public_tool_server(name, endpoint)
+
+        print("Configured Microsoft Learn MCP and native Azure Retail Prices REST-to-MCP conversion.")
+
+    def configure_public_tool_server(self, name: str, endpoint: dict) -> None:
+        # Native endpoint and credential contract:
+        # https://learn.microsoft.com/rest/api/aigateway/ai-gateway-tool-server-resources/create-or-update
+        tool_id = self.workspace_id + "/toolServers/" + name
+        tool = self.arm(tool_id, "PUT", {"properties": {
+            "displayName": "Microsoft Learn" if name == "learn" else "Azure Retail Prices",
+            "type": endpoint["kind"], "accessState": "active", "failureMode": "failClosed",
+            "subscriptionRequired": True,
+            "endpoints": [{**endpoint, "credentials": {"type": "none"}, "required": True}],
+            "policies": [],
+        }}, version=TOOL_SERVER_API)
+        if not tool.get("properties", {}).get("gatewayEndpoints"):
+            tool = self.arm(tool_id, version=TOOL_SERVER_API)
+        self.state["mcpEndpoints"][name] = runtime_endpoint(tool, "mcp", self.state["hostname"])
+        self.save()
 
     @recorded_stage("ai-gateway-mcp")
     def mcp(self) -> None:
-        endpoint = self.state.get("mcpEndpoint")
+        self.state["mcpChecks"] = {}
+        self.save()
+        for name in MCP_SOURCES:
+            check = {
+                "source": self.state.get("mcpSources", {}).get(name, MCP_SOURCES[name]),
+                "status": "failed", "authentication": [],
+            }
+            self.state["mcpChecks"][name] = check
+            try:
+                self.check_public_mcp(name, check)
+            except (DemoError, json.JSONDecodeError, UnicodeDecodeError):
+                check["error"] = (
+                    "The gateway MCP check failed. Review the recorded authentication, "
+                    "discovery and tool exchanges for this source."
+                )
+            self.save()
+        print(json.dumps(self.state["mcpChecks"], indent=2))
+        if any(check["status"] != "passed" for check in self.state["mcpChecks"].values()):
+            raise DemoError("One or more public MCP checks failed. Both source results have been saved.")
+
+    def check_public_mcp(self, name: str, check: dict) -> None:
+        endpoint = self.state.get("mcpEndpoints", {}).get(name)
         if not endpoint:
-            raise DemoError("Configure MCP first.")
+            raise DemoError("Configure both public MCP endpoints first.")
         require_runtime_url(endpoint, self.state["hostname"])
         if EVENTS.enabled:
-            server = self.arm(self.workspace_id + "/toolServers/model-tools")["properties"]
-            EVENTS.configuration("MCP server settings", {
-                "displayName": server.get("displayName"), "type": server.get("type"),
-                "failureMode": server.get("failureMode"), "policies": server.get("policies", []),
-                "endpoints": [{
-                    key: value for key, value in item.items()
-                    if key in ("id", "namespace", "kind", "tools", "credentials")
-                } for item in server.get("endpoints", [])],
-            })
-        initialize = {
-            "jsonrpc": "2.0", "id": 1, "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-03-26", "capabilities": {},
-                "clientInfo": {"name": "ai-gateway-playground", "version": "1.0"},
-            },
-        }
-        auth_checks = []
+            tool_id = self.workspace_id + "/toolServers/" + name
+            server = self.arm(tool_id, version=TOOL_SERVER_API)["properties"]
+            EVENTS.configuration(name + " MCP server settings", server)
+        self.check_mcp_authentication(endpoint, check["authentication"])
+        headers = {"api-key": self.runtime_key(), "Accept": "application/json, text/event-stream"}
+        check.update(public_tool_call(endpoint, headers, name, self.config["location"]))
+        check["status"] = "passed"
+
+    def check_mcp_authentication(self, endpoint: str, checks: list) -> None:
         for label, headers in (
             ("missingCredential", {}),
-            ("invalidCredential", {"api-key": "invalid-demo-credential"}),
+            ("invalidCredential", {"api-key": "invalid-credential"}),
         ):
             EVENTS.expect("Missing MCP credential" if not headers else "Invalid MCP credential", (401, 403))
             status, _, _ = request(
-                "POST", endpoint, {"Accept": "application/json, text/event-stream", **headers}, initialize,
+                "POST", endpoint, {"Accept": "application/json, text/event-stream", **headers}, mcp_initialise(),
             )
+            checks.append({"check": label, "httpStatus": status})
             if status not in (401, 403):
                 raise DemoError(f"MCP {label} did not reject authentication: HTTP {status}.")
-            auth_checks.append({"check": label, "httpStatus": status})
-        headers = {
-            "api-key": self.runtime_key(),
-            "Accept": "application/json, text/event-stream",
-        }
-        check = {**model_tool_call(endpoint, headers, self.config["model"]), "authentication": auth_checks}
-        self.state["mcpChecks"] = check
-        self.save()
-        print(json.dumps(check, indent=2))
 
     @recorded_stage("native-tokens")
     def telemetry(self) -> None:
@@ -1417,7 +1489,7 @@ class Demo:
             print("\nNATIVE TOKEN REPORTING - LEGACY REQUEST FIELDS (KQL IN WORKSPACE LOGS)\n" + self.token_query().replace(" | ", "\n| "))
 
     def show(self) -> None:
-        required = ("hostname", "gatewayName", "sku", "applicationInsightsId", "foundryId", "logWorkspaceId", "modelEndpoints", "mcpEndpoint")
+        required = ("hostname", "gatewayName", "sku", "applicationInsightsId", "foundryId", "logWorkspaceId", "modelEndpoints", "mcpEndpoints")
         if any(not self.state.get(name) for name in required):
             raise DemoError("Local deployment state is incomplete. Restore the approved operator state before presenting.")
         print("PLAYGROUND MAP")
@@ -1434,7 +1506,8 @@ class Demo:
         print("\nAPI ADDRESSES - USE THE SCRIPTS, NOT BROWSER NAVIGATION")
         print("Gateway API base: https://" + self.state["hostname"])
         print("Model endpoint: " + self.state["modelEndpoints"][MODEL_ALIAS])
-        print("MCP endpoint: " + self.state["mcpEndpoint"])
+        for name, endpoint in self.state["mcpEndpoints"].items():
+            print(name + " MCP endpoint: " + endpoint)
         checks = ("modelChecks", "rateChecks", "mcpChecks", "activityChecks", "telemetryChecks")
         print(json.dumps({"completedChecks": [name for name in checks if name in self.state]}, indent=2))
         if self.state.get("nativeTokenGap"):
@@ -1450,7 +1523,8 @@ class Demo:
             self.workspace_id + "/aliases/" + MODEL_ALIAS,
             self.workspace_id + "/aliases/" + LIMITED_ALIAS,
             self.state.get("nativeOtlp", {}).get("exporterId", self.workspace_id + "/telemetryExporters/application-insights"),
-            self.workspace_id + "/toolServers/model-tools",
+            self.workspace_id + "/toolServers/learn",
+            self.workspace_id + "/toolServers/prices",
         ]
         if self.state.get("routingModels"):
             owned.extend(target["resourceId"] for target in self.state["routingModels"] if target["deployment"] != self.config["model"])
@@ -1501,45 +1575,100 @@ class Demo:
         return 0
 
 
-def model_tool_call(endpoint: str, headers: dict[str, str], model: str) -> dict:
-    result, response_headers = mcp_rpc(endpoint, headers, {
+def mcp_initialise() -> dict:
+    return {
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {
             "protocolVersion": "2025-03-26", "capabilities": {},
             "clientInfo": {"name": "ai-gateway-playground", "version": "1.0"},
         },
-    })
-    version = result.get("protocolVersion")
-    if not version:
-        raise DemoError("MCP initialization did not return a protocol version.")
-    headers = {**headers, "MCP-Protocol-Version": version}
+    }
+
+
+def public_tool_call(endpoint: str, headers: dict[str, str], source: str, location: str) -> dict:
+    try:
+        return invoke_public_tool(endpoint, headers, source, location)
+    except (ValidationError, json.JSONDecodeError) as error:
+        EVENTS.invalid_exchange("The public MCP response did not match the expected schema.")
+        raise DemoError("The public MCP response did not match the expected schema.") from error
+
+
+def invoke_public_tool(endpoint: str, headers: dict[str, str], source: str, location: str) -> dict:
+    result, response_headers = mcp_rpc(endpoint, headers, mcp_initialise())
+    initialisation = McpInitialisation.model_validate(result)
+    headers = {**headers, "MCP-Protocol-Version": initialisation.protocolVersion}
     for name, value in response_headers.items():
         if name.lower() == "mcp-session-id":
             headers["Mcp-Session-Id"] = value
     mcp_rpc(endpoint, headers, {"jsonrpc": "2.0", "method": "notifications/initialized"})
     result, _ = mcp_rpc(endpoint, headers, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-    tools = result.get("tools", [])
-    if len(tools) != 1 or not tools[0].get("name", "").endswith("summarize_text"):
-        raise DemoError("The MCP server did not expose exactly the permitted model tool.")
+    discovered = McpTools.model_validate(result)
+    tool, arguments = select_public_tool(discovered, source, location)
     result, _ = mcp_rpc(endpoint, headers, {
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-        "params": {"name": tools[0]["name"], "arguments": {
-            "model": model,
-            "messages": [{"role": "user", "content": (
-                "Summarize: A project has three open tasks. Two need owners and one needs a due date. "
-                "State the next action in one sentence."
-            )}],
-            "max_completion_tokens": 96, "reasoning_effort": "none",
-        }},
+        "params": {"name": tool.name, "arguments": arguments},
     })
-    try:
-        model_check = tool_model_result(result)
-    except DemoError as error:
-        EVENTS.invalid_exchange(str(error))
-        raise
+    payload = public_tool_payload(result)
+    evidence = learn_evidence(payload) if source == "learn" else price_evidence(payload)
     return {
-        "initialized": True, "toolCount": len(tools), "tool": tools[0]["name"],
-        "invocationSucceeded": True, **model_check,
+        "initialized": True, "toolCount": len(discovered.tools), "tool": tool.name,
+        "invocationSucceeded": True, "result": evidence,
+    }
+
+
+def select_public_tool(discovered: McpTools, source: str, location: str) -> tuple[McpTool, dict]:
+    permitted = (
+        ("microsoft_docs_search", "microsoft_docs_fetch") if source == "learn"
+        else ("get_azure_retail_prices",)
+    )
+    if discovered.nextCursor:
+        raise DemoError("The public MCP tool list is incomplete.")
+    for tool in discovered.tools:
+        if not any(re.search(r"(?:^|[_./:-])" + name + r"$", tool.name) for name in permitted):
+            raise DemoError("The public MCP server exposed a tool outside its read-only allowlist.")
+    selected = [tool for tool in discovered.tools if tool.name.endswith(permitted[0])]
+    if len(selected) != 1:
+        raise DemoError("The public MCP server must expose one matching read-only tool.")
+    tool = selected[0]
+    parameter = "query" if source == "learn" else "$filter"
+    if parameter not in tool.inputSchema.properties:
+        raise DemoError("The discovered public tool schema does not expose the expected query parameter.")
+    argument = "Azure API Management overview" if source == "learn" else retail_filter(location)
+    return tool, {parameter: argument}
+
+
+def public_tool_payload(result: dict) -> dict:
+    response = McpToolResult.model_validate(result)
+    if response.isError:
+        raise DemoError("The public MCP tool returned an error.")
+    if response.structuredContent is not None:
+        return response.structuredContent
+    text = [part.text for part in response.content if part.type == "text" and part.text is not None]
+    if len(text) != 1:
+        raise DemoError("The public MCP tool must return one JSON text result.")
+    return json.loads(text[0].lstrip("\ufeff"))
+
+
+def learn_evidence(payload: dict) -> dict:
+    response = LearnSearchResult.model_validate(payload)
+    return {
+        "query": "Azure API Management overview", "returnedCount": len(response.results),
+        "documents": [{
+            "title": item.title[:300], "url": str(item.contentUrl),
+            "excerpt": (item.content or "")[:1200],
+        } for item in response.results[:3]],
+    }
+
+
+def price_evidence(payload: dict) -> dict:
+    response = RetailPrices.model_validate(payload)
+    return {
+        "currency": response.BillingCurrency, "returnedCount": response.Count,
+        "items": [item.model_dump() for item in response.Items[:10]],
+        "pagesRetrieved": 1, "hasMorePages": response.NextPageLink is not None,
+        "displayedCount": min(10, len(response.Items)),
+        "priceBasis": "Microsoft public retail list prices, not negotiated prices or a customer bill.",
+        "scope": "One filtered response page for API Management Consumption in the configured region.",
     }
 
 

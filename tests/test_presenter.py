@@ -56,6 +56,15 @@ class PresenterRulesTests(unittest.TestCase):
     def test_failed_action_does_not_display_stale_successful_state(self):
         self.assertIsNone(result_summary("smoke", "failed", {"modelChecks": [{"httpStatus": 200}]}))
 
+    def test_failed_mcp_action_keeps_both_source_outcomes(self):
+        checks = {
+            "learn": {"status": "passed", "tool": "microsoft_docs_search", "result": "Gateway documentation"},
+            "prices": {"status": "failed", "error": "The price request failed."},
+        }
+        summary = result_summary("mcp", "failed", {"mcpChecks": checks})
+        self.assertEqual(summary, checks)
+        self.assertIsNone(result_summary("mcp", "failed", {}))
+
     def test_worker_failure_finishes_active_and_pending_stages(self):
         from opentelemetry.sdk.trace import TracerProvider
 

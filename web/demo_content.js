@@ -7,17 +7,17 @@ const DEMO_CONTENT = {
     flow:["Local HTTPS app","AI Gateway","Owned Foundry models"],
     facts:[
       ["AI Gateway resource","Microsoft.ApiManagement/aigateways"],
-      ["Gateway SKU","Consumption"],
-      ["Configuration","Model aliases, structured JSON policies, and an OpenAPI-generated MCP tool"],
+      ["Gateway SKU","Standard"],
+      ["Configuration","Model aliases, structured JSON policies, remote MCP, and REST-to-MCP tools"],
       ["Evidence","Recorded requests plus native gateway monitoring; validate each deployment separately"]
     ]
   },
   resources: {
     title:"One owned environment",
-    explanation:"All cloud dependencies belong to the playground deployment. The Python app runs on your computer, not in an Azure web application.",
+    explanation:"Your deployment owns the gateway, Foundry models, and monitoring resources. The gateway also calls public Microsoft Learn and Azure Retail Prices services. The Python app runs on your computer.",
     flow:["Dedicated resource group","Gateway and Foundry account","Dedicated monitoring resources"],
     facts:[
-      ["Gateway","AI Gateway Consumption with managed identity"],
+      ["Gateway","AI Gateway Standard with managed identity"],
       ["Models","Three configurable Foundry deployments"],
       ["Monitoring","Log Analytics workspace and Application Insights"],
       ["Permissions","Scoped role assignment for gateway access to its Foundry account"]
@@ -57,16 +57,17 @@ const DEMO_CONTENT = {
     ]
   },
   mcp: {
-    title:"A model call exposed as an MCP tool",
-    explanation:"The gateway generates a summarization tool from an OpenAPI operation over the playground's own Foundry chat-completions endpoint.",
-    flow:["MCP client: runtime key","model-tools: model / summarize_text","Foundry: managed identity"],
+    title:"Two Microsoft sources through one gateway",
+    explanation:"Front Microsoft Learn's existing remote MCP service. Convert Azure Retail Prices REST into an MCP tool with the gateway's OpenAPI support.",
+    flow:["Local HTTPS app: gateway key","Owned AI Gateway","Microsoft public services: anonymous"],
     facts:[
       ["Protocol sequence","initialize, notifications/initialized, tools/list, tools/call"],
-      ["Tool definition","Server model-tools; namespace model; operation summarize_text"],
-      ["Backend operation","POST /openai/v1/chat/completions"],
-      ["Backend audience","https://cognitiveservices.azure.com"],
-      ["Success condition","Successful tool invocation with a non-empty model answer and returned model name"],
-      ["Identity boundary","Runtime key to gateway; managed identity to Foundry; no delegated OAuth"]
+      ["Existing MCP","Microsoft Learn: https://learn.microsoft.com/api/mcp"],
+      ["REST conversion","Azure Retail Prices: https://prices.azure.com/api/retail/prices"],
+      ["Price operation","get_azure_retail_prices; the result shows the actual discovered tool name"],
+      ["Access boundary","Gateway key required; both Microsoft backends allow anonymous access without a backend key"],
+      ["Price meaning","Public list prices, not billed charges or negotiated rates"],
+      ["Evidence","Each source keeps its own outcome, discovered tool, result, and credential checks"]
     ]
   },
   activity: {
@@ -117,8 +118,8 @@ const DEMO_CONTENT = {
 
 const DEMO_REFERENCE = [
   {title:"Identity and policy scope",rows:[
-    ["Experiment","Portal / management","Azure CLI user and Entra permissions manage the playground resources."],
-    ["Experiment","Runtime authentication","Model and MCP calls use runtime keys. The gateway accesses Foundry with managed identity."],
+    ["Experiment","Portal / management","The signed-in Azure user and Entra permissions manage the playground resources."],
+    ["Experiment","Runtime authentication","Model and MCP calls require gateway keys. The gateway accesses Foundry with managed identity. Microsoft Learn and Azure Retail Prices allow anonymous backend calls."],
     ["Experiment","Alias policies","Independent request limits on aliases that use the same catalog model."],
     ["Not demonstrated","Person / group budgets","The rate example uses an IP counter. It does not map Entra groups to personal token allowances."],
     ["Not configured","PII redaction","Request/response capture does not redact PII. Apply separate redaction and access controls where required."]
@@ -134,11 +135,12 @@ const DEMO_REFERENCE = [
     ["Requires validation","Native evidence","Run the native checks to confirm that gateway spans, token counters, and estimated model cost arrive in Azure Monitor."],
     ["Experiment","Local payload viewer","The app shows sanitized request/response bodies separately from cloud payload capture."],
     ["Configuration required","Conversation review","Cloud payload capture defaults to off. Review access and retention before enabling it; hidden model reasoning is not exposed."],
-    ["Experiment","Generated MCP tool","OpenAPI-to-MCP exposes summarize_text over the playground's own Foundry model. Inspect the returned answer and response token counts."],
+    ["Experiment","Existing remote MCP","The gateway fronts Microsoft Learn's remote MCP service. Inspect the discovered tool name and public documentation result."],
+    ["Experiment","REST-to-MCP conversion","OpenAPI-to-MCP exposes get_azure_retail_prices over Azure Retail Prices REST. Results show public list prices, not billed costs."],
     ["Not demonstrated","Delegated MCP OAuth","The prepared MCP client uses a gateway key, not delegated user OAuth."]
   ],source:"https://learn.microsoft.com/azure/api-management/ai-gateway-manage-models-tools"},
   {title:"SKU, API version, and preview",rows:[
-    ["Template target","AI Gateway","Consumption on Microsoft.ApiManagement/aigateways. Deploy and validate your own environment."],
+    ["Template target","AI Gateway","Standard on Microsoft.ApiManagement/aigateways. Deploy and validate your own environment."],
     ["Template contract","API versions","Provisioning: 2026-09-01-preview. Models: 2026-05-01. Alias policies / OTLP: 2025-09-01-preview."],
     ["Preview","Production commitments","Confirm current availability, limits, pricing, SLA, and GA plans with the product team."]
   ],source:"https://learn.microsoft.com/azure/api-management/ai-gateway-resource"}

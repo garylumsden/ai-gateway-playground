@@ -16,9 +16,9 @@ const STEPS = [
   {id:"rate",label:"Request limits",title:"Request limits",description:"Test a limited route and an unrestricted route.",action:"rate",
     note:"Show the 429 response, the working unrestricted route, and recovery after the retry window.",
     caution:"The limit uses an IP counter and can overshoot. It does not demonstrate person or group allowances, or a spending cap.",links:["gatewayPolicies","gatewayModels","newGateway"]},
-  {id:"mcp",label:"MCP tools",title:"MCP tools",description:"Call an OpenAPI-generated tool that summarizes text with the playground's own Foundry model.",action:"mcp",
-    note:"Inspect initialization, tool discovery, and invocation. Show the returned model answer, model name, and response token counts.",
-    caution:"The client uses a runtime key. The gateway uses managed identity for Foundry. This example does not demonstrate delegated OAuth or remote MCP federation.",links:["gatewayMcp","foundry","newGateway"]},
+  {id:"mcp",label:"MCP tools",title:"MCP tools",description:"Use Microsoft Learn's existing MCP service and convert Azure Retail Prices REST into an MCP tool through your AI Gateway.",action:"mcp",
+    note:"Run both cases. Inspect session setup, discovered tool names, public results, and missing or invalid gateway key rejections.",
+    caution:"Both Microsoft sources accept anonymous requests and need no backend key. The app calls only your gateway, which requires a key. Retail Prices returns list prices, not billed costs.",links:["gatewayMcp","newGateway"]},
   {id:"monitoring",label:"Monitoring",title:"Monitoring",description:"Review request activity, token usage, estimated model cost, and policy outcomes.",action:"monitoring",
     note:"Select Refresh monitoring for native requests, token counters and the gateway's estimated model cost. Open Token usage for the alias/model cost breakdown.",
     caution:"Costs come from the gateway's native metric, not a local price calculation or Azure billing. The activity log records resource changes, not every model call.",links:["gatewayMonitoring","newInsights","workspace","gatewayAudit"]},
@@ -44,9 +44,17 @@ const GATEWAY_VIEWS = {
   gatewayRouting:{label:"Routing alias",path:"/catalog/models/playground-routing"},
   gatewayAccess:{label:"Gateway access",path:"/access"},
   gatewayPolicies:{label:"Gateway policies",path:"/governance/policies"},
-  gatewayMcp:{label:"Model MCP server",path:"/tools/mcp-servers/model-tools"},
+  gatewayMcp:{label:"MCP servers",path:"/tools/mcp-servers"},
   gatewayMonitoring:{label:"AI Gateway monitoring",path:"/monitoring/overview"}
 };
+const MCP_CASES = [
+  {id:"learn",title:"Microsoft Learn · Existing MCP",
+    source:"https://learn.microsoft.com/api/mcp",
+    description:"Send MCP requests through your gateway to Microsoft's remote MCP service."},
+  {id:"prices",title:"Azure Retail Prices · REST to MCP",
+    source:"https://prices.azure.com/api/retail/prices",
+    description:"Call a gateway-generated MCP tool over Microsoft's REST API. Results contain list prices, not billed costs."},
+];
 const $ = id => document.getElementById(id);
 let context, csrf = "", selected = 0, activeJob = null, submitting = null, routingMode = "weighted";
 let pageView = "demo", technicalKey = "", stagesKey = "", ledgerJob = "", detailKey = "", traceQuery = "", navKey = "";
@@ -343,11 +351,58 @@ function selectView(view) {
   render();
 }
 
+function renderMcpEvidence(card, check) {
+  const facts = el("dl", "technical-facts");
+  for (const [label,value] of [
+    ["Source",check.source],["Discovered tool",check.tool || "Not discovered"],
+    ["Discovered tools",check.toolCount],
+  ]) {
+    const pair = el("div", "technical-fact");
+    pair.append(el("dt", "", label), el("dd", "", String(value)));
+    facts.append(pair);
+  }
+  card.append(facts);
+  if (check.error) card.append(el("p", "exchange-validation", check.error));
+  if (check.result != null) {
+    const result = el("details", "mcp-evidence");
+    result.append(el("summary", "", "Public tool result"),
+      el("pre", "", typeof check.result === "string" ? check.result : JSON.stringify(check.result, null, 2)));
+    card.append(result);
+  } else card.append(el("p", "hint", "No tool result recorded. Inspect the request and response."));
+  if (check.authentication?.length) {
+    const authentication = el("details", "mcp-evidence");
+    authentication.append(el("summary", "", "Gateway credential checks"),
+      el("pre", "", JSON.stringify(check.authentication, null, 2)));
+    card.append(authentication);
+  }
+}
+
+function renderMcpScenarios(checks) {
+  const panel = $("mcp-scenarios");
+  panel.hidden = false;
+  for (const scenario of MCP_CASES) {
+    const check = checks?.[scenario.id];
+    const status = check?.status || "not-run";
+    const card = el("article", "mcp-case");
+    const heading = el("div", "evidence-heading");
+    heading.append(el("h3", "", scenario.title), el("span", "status " + status, STATUS[status]));
+    card.append(heading, el("p", "", scenario.description),
+      linkButton({href:scenario.source}, "Microsoft source"),
+      el("p", "hint", "Gateway key required. Anonymous backend access; no backend key."));
+    if (check) renderMcpEvidence(card, check);
+    else card.append(el("p", "hint", "Run to discover tools and record a public result."));
+    panel.append(card);
+  }
+}
+
 function renderResult(step) {
   const starting = Boolean(submitting && submitting === step.action);
   const job = starting ? null : latest(step.action);
   $("result-panel").hidden = !step.action;
   $("result-cards").replaceChildren();
+  $("mcp-scenarios").replaceChildren();
+  $("mcp-scenarios").hidden = true;
+  if (step.action === "mcp") renderMcpScenarios(job?.summary);
   $("cost-panel").hidden = true;
   $("cost-models").replaceChildren();
   $("cost-notice").textContent = "";
@@ -399,15 +454,7 @@ function renderResult(step) {
     metric("Recovered", data.recovered, "good");
     $("result-message").textContent = `IP counter; ${data.periodSeconds}-second window. ${data.allowedBeforeBlock} requests succeeded before the 429 response.`;
   } else if (step.action === "mcp") {
-    metric("Session initialized", data.initialized ? "Yes" : "No", data.initialized ? "good text" : "warn text");
-    metric("Permitted tools", data.toolCount, "good");
-    metric("Tool call", data.invocationSucceeded ? "Succeeded" : "Failed", data.invocationSucceeded ? "good text" : "bad text");
-    metric("Model answer", data.answerPresent ? "Present" : "Missing", data.answerPresent ? "good text" : "warn text");
-    metric("Returned model", data.model, "text");
-    metric("Input tokens", data.inputTokens);
-    metric("Output tokens", data.outputTokens);
-    metric("Total tokens", data.totalTokens);
-    $("result-message").textContent = `${data.tool}. Runtime key to gateway; managed identity to Foundry. Inspect the tool response for the model answer.`;
+    $("result-message").textContent = "Both MCP source checks passed. Inspect each public tool result and the recorded gateway requests.";
   } else if (step.action === "activity") {
     metric("Native requests", data.Requests, "good");
     metric("Last event", new Intl.DateTimeFormat(undefined,{timeStyle:"medium"}).format(new Date(data.LastSeen)), "text");
@@ -602,7 +649,7 @@ async function start() {
     STEPS.find(step => step.id === "routing").action = "routing-" + routingMode;
     $("locked").hidden = true;
     $("workspace").hidden = false;
-    $("identity-badge").textContent = "Azure CLI user verified";
+    $("identity-badge").textContent = "Signed-in Azure user verified";
     $("model-label").textContent = context.model;
     $("sku-label").textContent = context.sku;
     $("operator-name").textContent = context.operator.name;

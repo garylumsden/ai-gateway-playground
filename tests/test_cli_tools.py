@@ -62,7 +62,10 @@ class PresenterMapTests(unittest.TestCase):
             "hostname": "gateway.example.invalid", "gatewayName": "gateway", "sku": "Consumption",
             "applicationInsightsId": "/subscriptions/example/resourceGroups/rg-new-demo/providers/Microsoft.Insights/components/new-insights",
             "modelEndpoints": {MODEL_ALIAS: "https://gateway.example.invalid/models/chat/completions"},
-            "mcpEndpoint": "https://gateway.example.invalid/default/toolservers/model-tools/mcp",
+            "mcpEndpoints": {
+                "learn": "https://gateway.example.invalid/default/toolservers/learn/mcp",
+                "prices": "https://gateway.example.invalid/default/toolservers/prices/mcp",
+            },
             "foundryId": "/subscriptions/example/resourceGroups/rg-new-demo/providers/Microsoft.CognitiveServices/accounts/playground-models",
             "logWorkspaceId": "/subscriptions/example/resourceGroups/rg-new-demo/providers/Microsoft.OperationalInsights/workspaces/playground-logs",
         }

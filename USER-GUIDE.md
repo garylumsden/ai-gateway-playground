@@ -26,7 +26,7 @@ Keep resource links and their download private; they contain deployment identifi
 | Model access | Run and select a request | Inspect the prompt, answer, model, status, latency, and tokens |
 | Model routing | Run Weights or Priorities | Inspect the selected backends |
 | Request limits | Run and wait for recovery | Compare a limited alias with an available normal alias |
-| MCP tools | Run and inspect protocol calls | Call the model through an OpenAPI-generated MCP tool |
+| MCP tools | Run and inspect both cases | Search Microsoft Learn through remote MCP and query retail prices through native OpenAPI-to-MCP conversion |
 | Monitoring | Refresh monitoring | Read native activity, token usage, and estimated model cost |
 | Gateway activity | Run | Query native Server spans |
 | Token usage and cost | Run | Inspect cumulative counters and cost by alias/model |
@@ -71,20 +71,49 @@ Run the limit check against `playground-limited`, which shares the normal alias'
 Inspect the rejection, the working normal-alias request, and recovery.
 Allow for IP-counter overshoot; this check cannot establish personal allowances or an exact spending cap.
 
-## MCP model tool
+## MCP tools
 
-Call `summarize_text` in the `model` namespace of the `model-tools` server.
-The gateway generates this tool from the playground's Foundry chat-completions endpoint.
-Inspect session initialization, tool discovery, and invocation with the project-task prompt.
+Select **Run** on the **MCP tools** page to run both cases through your standalone AI Gateway.
+Inspect session initialisation, `tools/list` discovery, and tool invocation for each case.
+Review the returned data and the missing/invalid credential checks.
+Expect the gateway to reject those two credential checks even though both backends accept anonymous calls.
+Treat a rejection with valid gateway credentials as a failure.
 
-Inspect the returned answer, model name, and response token counts.
-Check the answer as well as the HTTP status; an HTTP 200 can contain a tool error.
-The app reads model output from `structuredContent` or a JSON text block and retains the raw envelope.
-Treat empty answers, malformed data, and backend errors as failures.
+### Remote Microsoft Learn MCP
 
-Use the configured primary deployment with `max_completion_tokens: 96` and `reasoning_effort: "none"`.
-Select compatible models or adapt these requests.
-Delegated OAuth, remote federation, and per-user tool entitlements need separate implementation and validation.
+The gateway forwards MCP calls to `https://learn.microsoft.com/api/mcp` over Streamable HTTP.
+Inspect the discovered search tool name and its result links.
+The application uses tool discovery rather than assuming a fixed tool-name prefix.
+Microsoft Learn also offers article fetching and code sample search tools.
+See the [Microsoft Learn MCP overview](https://learn.microsoft.com/training/support/mcp)
+and [developer reference](https://learn.microsoft.com/training/support/mcp-developer-reference).
+
+### Azure Retail Prices REST API as MCP
+
+The gateway uses native OpenAPI-to-MCP conversion to expose `get_azure_retail_prices`.
+It calls `https://prices.azure.com/api/retail/prices` with a read-only GET request.
+No custom proxy or Foundry model sits between the gateway and this API.
+
+The configured request filters for service `API Management`, SKU `Consumption`, and your environment's selected location.
+Choose the configured service and location filters for the prices you need.
+The API supports `$filter` fields such as `serviceName`, `armRegionName`, and `skuName`.
+The page displays the first 10 rows from one API page.
+Inspect the returned price, currency, unit of measure, tier minimum, and effective date.
+Each API page contains at most 1,000 records. A non-empty `NextPageLink` means more records remain.
+Check `hasMorePages` in the captured result. This run does not fetch the remaining pages.
+Do not treat the displayed rows or one page as the full price catalogue.
+See the [Retail Prices API reference](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices).
+
+These are public retail list prices. They do not give access to negotiated rates, private billing data,
+or a total monthly cost calculation.
+
+For both cases, inspect the tool result as well as the HTTP status.
+An HTTP 200 can contain a tool error.
+Treat empty results, malformed data, and backend errors as failures.
+Both Microsoft-hosted backends require no authentication or API key and are free to call.
+The gateway still enforces frontend credentials. Azure gateway, model, and telemetry usage remains billable.
+Neither MCP case calls a Foundry model; the model access and routing pages retain the owned model deployments.
+Delegated OAuth and per-user tool entitlements need separate implementation and validation.
 
 ## Monitoring and cost
 
@@ -134,6 +163,6 @@ Wait for a running check to finish before resetting.
 | Another check is running | Wait or refresh to reconnect |
 | Telemetry is delayed | Generate model traffic and allow the native check to wait |
 | Cost is not reported | Inspect native query results and missing-price flags; do not assume zero |
-| MCP tool fails | Inspect its response, model configuration, and managed identity permissions |
+| MCP tool fails | Inspect discovery, the tool result, gateway credentials, and public backend availability |
 
-Use the [README cleanup guidance](README.md#limits-and-cleanup) when you finish experimenting.
+Use the [README cleanup guidance](README.md#clean-up) when you finish experimenting.

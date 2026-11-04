@@ -34,7 +34,8 @@ Configure access at each connection:
 | --- | --- |
 | Operator to management | Grant permission to configure and query Azure resources |
 | Application to gateway | Authenticate and authorize runtime requests |
-| Gateway to backend | Grant the gateway permission to call a model or tool |
+| Gateway to Foundry | Grant the gateway managed identity permission to call the owned models |
+| Gateway to Learn MCP or Retail Prices | Use anonymous access to the public backend; no extra role or backend credential is needed |
 
 Use the signed-in azd identity for management and monitoring.
 Prepared clients send runtime keys to the gateway, which uses managed identity for Foundry access.
@@ -56,11 +57,33 @@ Use separate financial controls where an exact spending cap is required.
 ## MCP and information controls
 
 Use Model Context Protocol (MCP) to discover and call tools.
-The playground generates a tool from an OpenAPI definition of its Foundry endpoint.
-Call `summarize_text` in the `model` namespace on server `model-tools`.
-The tool sends a project-task prompt to the model and returns its answer.
-This experiment includes no separate business API or agent service.
-Inspect the tool answer, model, and token counts even when the HTTP status is 200.
+Run both cases from the **MCP tools** page:
+
+| Case | Request path |
+| --- | --- |
+| Remote MCP | Application → owned standalone AI Gateway → Microsoft Learn MCP at `https://learn.microsoft.com/api/mcp` |
+| REST API as MCP | Application → owned standalone AI Gateway → Azure Retail Prices at `https://prices.azure.com/api/retail/prices` |
+
+Microsoft Learn provides a remote MCP server over Streamable HTTP.
+The client uses `tools/list` to discover the current tools before invoking the search tool.
+Tool names and schemas can change; do not assume a fixed prefix.
+See the [Learn MCP overview](https://learn.microsoft.com/training/support/mcp)
+and [tool discovery reference](https://learn.microsoft.com/training/support/mcp-developer-reference).
+
+For Retail Prices, the gateway converts an OpenAPI operation into the read-only MCP tool `get_azure_retail_prices`.
+The gateway calls the public REST API with GET. It needs no custom proxy.
+Filter by your selected service and location with fields such as `serviceName`, `armRegionName`, and `skuName`.
+The configured request uses `API Management`, `Consumption`, and your environment's selected location.
+The API returns at most 1,000 records per page and supplies `NextPageLink` for further pages.
+The playground displays the first 10 rows from one page and reports `hasMorePages`; it does not fetch later pages.
+These public list prices do not include negotiated rates or private bills.
+This tool does not calculate total monthly costs.
+See the [Retail Prices API reference](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices).
+
+Neither MCP case uses a Foundry model. Model access and routing use the three owned deployments.
+Both public Microsoft-hosted backends require no authentication or API key and are free to call.
+The gateway still requires frontend credentials.
+Inspect the real tool result and gateway credential rejections, even when a tool call returns HTTP 200.
 
 Authorize callers as well as authenticating the gateway to the backend.
 Backend OAuth alone does not propagate an end user's identity.
@@ -90,6 +113,7 @@ Per-user tool access and group budgets require work beyond these experiments.
 
 Review model, gateway, and monitoring charges.
 Native model cost estimates exclude other deployment charges.
+Free backend calls do not remove Azure gateway or telemetry charges.
 Use Reset to clear local evidence and restore routing.
 Cloud resources and charges remain until you remove the environment.
 Review the ownership inventory before deleting resources.

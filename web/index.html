@@ -47,7 +47,7 @@
       <section id="orientation" hidden>
         <article class="environment">
           <h2>One owned environment</h2>
-          <p>The template creates a Foundry account, three model deployments, AI Gateway Consumption, and monitoring resources for this playground.</p>
+          <p>The template creates a Foundry account, three model deployments, AI Gateway Standard, and monitoring resources for this playground.</p>
           <p>The Python app runs locally over HTTPS. It sends prepared requests through the gateway and displays their recorded evidence.</p>
           <h3>Experiment path</h3>
           <ol class="experiment-path">
@@ -78,6 +78,7 @@
         <div class="result-heading"><h2 id="result-title">Results</h2><span id="result-time"></span></div>
         <div id="result-empty" class="empty">Select Run to start.</div>
         <div id="result-cards" class="result-cards"></div>
+        <div id="mcp-scenarios" class="mcp-scenarios" aria-label="MCP sources" hidden></div>
         <div id="result-message" class="result-message" role="status" aria-live="polite"></div>
       </section>
       <section id="cost-panel" class="evidence-panel" aria-labelledby="cost-title" hidden>
@@ -167,10 +168,10 @@
     <details>
       <summary>Connection and setup</summary>
       <p id="identity-badge">Connecting</p>
-      <dl><dt>Azure CLI user</dt><dd id="operator-name"></dd><dt>Subscription</dt><dd id="operator-subscription"></dd><dt>Directory ID</dt><dd id="operator-tenant"></dd></dl>
-      <p>The server uses your Azure CLI user. Portal links use your browser account.</p>
+      <dl><dt>Signed-in Azure user</dt><dd id="operator-name"></dd><dt>Subscription</dt><dd id="operator-subscription"></dd><dt>Directory ID</dt><dd id="operator-tenant"></dd></dl>
+      <p>The server uses your signed-in Azure user. Portal links use your browser account.</p>
       <p>Gateway blades use the portal's selected gateway. Confirm its name under Resource links and names.</p>
-      <p>Model and MCP requests use gateway keys. The gateway connects to Foundry with managed identity.</p>
+      <p>Model and MCP requests use gateway keys. The gateway connects to Foundry with managed identity. Microsoft Learn and Azure Retail Prices accept anonymous backend requests.</p>
       <p>Run the launcher again if browser authorization expires:</p>
       <code>pwsh .\scripts\start-presenter.ps1</code>
       <p class="hint">The server runs for eight hours. Browser authorization lasts two hours.</p>

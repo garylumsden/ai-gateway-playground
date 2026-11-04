@@ -138,3 +138,111 @@ test("shows gateway cost metric samples with their recorded currency", () => {
   assert.equal(view.outputTitle,"Native estimated cost samples");
   assert.equal(view.output,"example-alias / total_tokens / 0.00125 / USD");
 });
+
+function application() {
+  class Element {
+    constructor(tag = "div") {
+      this.tagName = tag; this.children = []; this.textContent = ""; this.hidden = true;
+    }
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; this.textContent = ""; }
+    addEventListener() {}
+    setAttribute(name, value) { this[name] = value; }
+    set innerHTML(value) { throw new Error("Public tool content must use textContent."); }
+  }
+  const nodes = new Map();
+  const browser = vm.createContext({
+    URLSearchParams, Intl, Map, Date, window:{}, location:{hash:""},
+    history:{replaceState() {}}, fetch:() => new Promise(() => {}),
+    document:{
+      createElement:tag => new Element(tag),
+      getElementById:id => {
+        if (!nodes.has(id)) nodes.set(id,new Element());
+        return nodes.get(id);
+      },
+    },
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "web", "app.js"), "utf8"),browser);
+  browser.document.getElementById("mcp-scenarios");
+  return {browser,nodes};
+}
+
+function descendants(node) {
+  return [node,...node.children.flatMap(descendants)];
+}
+
+test("renders both MCP sources with discovered tools and public results as text", () => {
+  const {browser,nodes} = application();
+  browser.checks = {
+    learn:{
+      status:"passed",source:"Microsoft Learn remote MCP",tool:"microsoft_docs_search",toolCount:3,
+      result:"<img src=x onerror=alert(1)>",
+      authentication:[{check:"missingCredential",httpStatus:401},{check:"invalidCredential",httpStatus:403}],
+    },
+    prices:{
+      status:"passed",source:"Azure Retail Prices REST",tool:"get_azure_retail_prices",toolCount:1,
+      result:{Items:[{retailPrice:0.125,currencyCode:"USD",unitOfMeasure:"1 Hour"}]},
+      authentication:[{check:"missingCredential",httpStatus:401},{check:"invalidCredential",httpStatus:401}],
+    },
+  };
+  vm.runInContext(`
+    results.set("mcp",{action:"mcp",status:"passed",summary:checks});
+    renderResult(STEPS.find(step => step.action === "mcp"));
+  `,browser);
+  const panel = nodes.get("mcp-scenarios");
+  assert.equal(panel.hidden,false);
+  assert.equal(panel.children.length,2);
+  const elements = descendants(panel);
+  const text = elements.map(node => node.textContent).join("\n");
+  assert.match(text,/Existing MCP/);
+  assert.match(text,/REST to MCP/);
+  assert.match(text,/microsoft_docs_search/);
+  assert.match(text,/get_azure_retail_prices/);
+  assert.match(text,/list prices/i);
+  assert.match(text,/gateway key/i);
+  assert.match(text,/anonymous/i);
+  assert.ok(elements.some(node => node.tagName === "pre" && node.textContent === "<img src=x onerror=alert(1)>"));
+  assert.match(text,/"retailPrice": 0.125/);
+  const links = elements.filter(node => node.tagName === "a");
+  assert.deepEqual(links.map(node => node.href),[
+    "https://learn.microsoft.com/api/mcp","https://prices.azure.com/api/retail/prices",
+  ]);
+  assert.ok(links.every(node => node.rel === "noopener noreferrer"));
+});
+
+test("keeps a successful MCP source visible when the other source fails", () => {
+  const {browser,nodes} = application();
+  browser.checks = {
+    learn:{
+      status:"failed",source:"Microsoft Learn remote MCP",tool:"",toolCount:0,
+      result:null,authentication:[],error:"The Learn request failed.",
+    },
+    prices:{
+      status:"passed",source:"Azure Retail Prices REST",tool:"get_azure_retail_prices",toolCount:1,
+      result:{Items:[]},authentication:[{check:"missingCredential",httpStatus:401}],
+    },
+  };
+  vm.runInContext(`
+    results.set("mcp",{action:"mcp",status:"failed",summary:checks,error:"One MCP source failed."});
+    renderResult(STEPS.find(step => step.action === "mcp"));
+  `,browser);
+  const panel = nodes.get("mcp-scenarios");
+  const text = descendants(panel).map(node => node.textContent).join("\n");
+  assert.match(text,/The Learn request failed/);
+  assert.match(text,/get_azure_retail_prices/);
+  assert.match(text,/"Items": \[\]/);
+  assert.equal(nodes.get("result-message").textContent,"One MCP source failed.");
+  assert.equal(nodes.get("step-status").textContent,"Failed");
+});
+
+test("shows both MCP paths before a run without claiming tool discovery", () => {
+  const {browser,nodes} = application();
+  vm.runInContext('renderResult(STEPS.find(step => step.action === "mcp"));',browser);
+  const panel = nodes.get("mcp-scenarios");
+  assert.equal(panel.hidden,false);
+  assert.equal(panel.children.length,2);
+  const text = descendants(panel).map(node => node.textContent).join("\n");
+  assert.match(text,/Not run/);
+  assert.ok(!text.includes("microsoft_docs_search"));
+  assert.ok(!text.includes("get_azure_retail_prices"));
+});

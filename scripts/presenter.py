@@ -187,10 +187,12 @@ def outcome(action: str, exit_code: int, stdout: str, stderr: str) -> str:
 
 
 def result_summary(action: str, status: str, state: dict) -> object:
+    if action == "mcp":
+        return state.get("mcpChecks")
     if status == "failed":
         return None
     names = {
-        "smoke": "modelChecks", "rate": "rateChecks", "mcp": "mcpChecks",
+        "smoke": "modelChecks", "rate": "rateChecks",
         "activity": "activityChecks",
     }
     if action == "telemetry":

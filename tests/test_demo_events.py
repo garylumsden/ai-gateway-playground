@@ -113,7 +113,7 @@ class DemoEvidenceTests(unittest.TestCase):
         self.assertEqual(statuses["model-access"], "passed")
         self.assertEqual(statuses["ai-gateway-mcp"], "failed")
         self.assertEqual(statuses["routing-weighted"], "skipped")
-        self.assertEqual(job["failure"]["label"], "AI Gateway MCP tool")
+        self.assertEqual(job["failure"]["label"], job["stages"][2]["label"])
 
     def test_response_bodies_and_capture_count_are_bounded_and_reported(self):
         recorder, events = self.recorder()

@@ -10,6 +10,10 @@ three new model deployments, Log Analytics, and Application Insights.
 Each environment owns its models. The deployment does not connect to existing model deployments.
 The application runs on your Windows computer, not on an Azure host.
 
+Use the **MCP tools** page to run two cases through your standalone AI Gateway:
+connect to the remote Microsoft Learn MCP server, and call the Azure Retail Prices REST API as an MCP tool.
+Microsoft hosts both public backends. Neither call uses a Foundry model.
+
 Use the [user guide](USER-GUIDE.md) for the experiments and [concepts guide](CONCEPTS.md) for the request path.
 This independent project is not an official Microsoft product.
 
@@ -20,6 +24,8 @@ flowchart LR
     browser[Browser on localhost] -->|HTTPS| app[Local Python application]
     app -->|Runtime key| gateway[AI Gateway]
     gateway -->|Managed identity| models[Foundry: GPT-5.4, mini, nano]
+    gateway -->|Anonymous Streamable HTTP| learn[Microsoft Learn MCP]
+    gateway -->|Native OpenAPI-to-MCP conversion: anonymous GET| prices[Azure Retail Prices REST API]
     gateway -->|Native OTLP export| insights[Application Insights]
     app -->|Entra ID: operation spans| insights
     insights --> logs[Log Analytics]
@@ -27,7 +33,10 @@ flowchart LR
     models -->|Diagnostic logs and metrics| logs
 ```
 
-The gateway applies access policies and routes requests to the environment's models.
+The gateway applies access policies and routes model requests to the environment's models.
+It also fronts `https://learn.microsoft.com/api/mcp` and exposes
+`https://prices.azure.com/api/retail/prices` as the read-only MCP tool `get_azure_retail_prices`.
+The gateway performs the OpenAPI conversion without a custom proxy.
 Its managed identity authenticates to Foundry and the telemetry destination.
 The local server uses your signed-in Azure identity for management and monitoring.
 It keeps Azure tokens and gateway keys out of the browser.
@@ -72,7 +81,7 @@ On Windows ARM64, it uses an installed x64 Python runtime registered with the Py
 4. Run `pwsh .\scripts\start-presenter.ps1` and use the browser tab that it opens.
 
 Keep the server terminal open.
-The deployment hooks configure the model aliases, limits, MCP tool, routing, and native telemetry.
+The deployment hooks configure the model aliases, limits, both MCP cases, routing, and native telemetry.
 They write the application settings and state under `.azure/<environment>/`, which Git ignores.
 The launcher uses the selected azd environment.
 Run `azd up` again to update that environment.
@@ -96,8 +105,8 @@ Treat **Not reported** as missing data, not zero cost.
 Cloud payload capture stays disabled.
 Request and response evidence stays in the local server's memory for the session.
 
-This solution calls model deployments directly through the gateway.
-It creates no Foundry project or agent, so there is no Foundry agent trace view.
+Model experiments call model deployments through the gateway. The two MCP cases call their public backends.
+The solution creates no Foundry project or agent, so there is no Foundry agent trace view.
 
 ## Identities and roles
 
@@ -113,6 +122,9 @@ Foundry and Application Insights reject key-based authentication.
 The gateway uses its system-assigned identity from the existing Bicep.
 The prepared runtime requests use a gateway key, which the server obtains in memory.
 An Azure-hosted application needs its own managed identity and browser sign-in design.
+The Microsoft Learn and Azure Retail Prices backends accept anonymous requests.
+They need no backend credentials, API keys, or extra Azure role.
+Gateway credential enforcement still applies to callers of both MCP cases.
 
 ## Clean up
 
@@ -133,7 +145,15 @@ Other environments and existing model deployments remain unchanged.
 | Routing checks use healthy models. | Test backend outages before relying on failover. |
 | AI Gateway does not support diagnostic settings. | Use its native OTLP exporter for activity, token, and cost monitoring. |
 | Cloud payload capture is disabled; the local application displays model content. | Review privacy, access, redaction, and retention before enabling cloud content capture. |
-| The resource group contains billable models and monitoring resources. | Review prices, quotas, ingestion, and retention for your selected configuration. |
+| Retail Prices returns public list prices, not negotiated rates or bills. Each response contains at most 1,000 records and can include `NextPageLink`. | Choose service and location filters, inspect pagination, and use your billing data for account-specific charges. This tool is not a total monthly cost calculator. |
+| The public Microsoft Learn and Retail Prices backends require no authentication and are free to call. Azure gateway, model, and telemetry usage remains billable. | Review prices, quotas, ingestion, and retention for your selected configuration. |
+
+See the [Microsoft Learn MCP overview](https://learn.microsoft.com/training/support/mcp),
+[Learn tool discovery reference](https://learn.microsoft.com/training/support/mcp-developer-reference),
+and [Azure Retail Prices API reference](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices)
+for backend access, tools, filters, and pagination.
+The native configuration follows the
+[AI Gateway tool server resource contract](https://learn.microsoft.com/rest/api/aigateway/ai-gateway-tool-server-resources/create-or-update?view=rest-aigateway-2026-11-01).
 
 ## Troubleshooting
 

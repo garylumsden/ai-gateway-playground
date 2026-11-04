@@ -1,5 +1,3 @@
-import base64
-import json
 import sys
 from pathlib import Path
 import unittest
@@ -7,82 +5,7 @@ from copy import deepcopy
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from gateway_demo import LIMIT_PROMPT, MODEL_PROMPTS, ROUTING_PROMPT, Demo, DemoError, NoRedirect, model_tool_call, tool_model_result, native_cost_totals, native_token_totals, require_runtime_url, retry_seconds, runtime_endpoint, secret_values
-
-
-class ModelToolResultTests(unittest.TestCase):
-    def response(self):
-        return {
-            "model": "example-model", "choices": [{"message": {"content": "Assign task owners and a due date."}}],
-            "usage": {"prompt_tokens": 12, "completion_tokens": 10, "total_tokens": 22},
-        }
-
-    def test_accepts_structured_content_and_json_text(self):
-        import json
-        expected = Demo.model_result(200, self.response())
-        self.assertEqual(tool_model_result({"structuredContent": self.response()}), expected)
-        self.assertEqual(tool_model_result({"content": [{"type": "text", "text": "\ufeff" + json.dumps(self.response())}]}), expected)
-
-    def test_tool_error_is_not_a_successful_model_answer(self):
-        with self.assertRaisesRegex(DemoError, "model tool returned an error"):
-            tool_model_result({"isError": True, "content": [{"type": "text", "text": "Tool invocation failed."}]})
-
-    def test_html_error_page_is_not_model_json(self):
-        with self.assertRaisesRegex(DemoError, "valid JSON"):
-            tool_model_result({"isError": False, "content": [{"type": "text", "text": "<html>Server error</html>"}]})
-
-    def test_valid_model_answer_and_usage_are_required(self):
-        for result in (
-            {"isError": True, "content": [{"type": "text", "text": "HTTP 401"}]},
-            {"content": [{"type": "text", "text": "unexpected text"}]},
-            {"structuredContent": {"choices": [], "usage": {"total_tokens": 1}}},
-        ):
-            with self.subTest(result=result), self.assertRaises(DemoError):
-                tool_model_result(result)
-
-    def test_model_tool_protocol_uses_the_selected_owned_model(self):
-        responses = [
-            ({"protocolVersion": "2025-03-26"}, {}),
-            ({}, {}),
-            ({"tools": [{"name": "model_summarize_text"}]}, {}),
-            ({"structuredContent": self.response()}, {}),
-        ]
-        with patch("gateway_demo.mcp_rpc", side_effect=responses) as rpc:
-            result = model_tool_call("https://gateway.example.invalid/mcp", {}, "example-model")
-        body = rpc.call_args_list[-1].args[2]
-        self.assertEqual(body["params"]["name"], "model_summarize_text")
-        self.assertEqual(body["params"]["arguments"]["model"], "example-model")
-        self.assertEqual(body["params"]["arguments"]["messages"][0]["role"], "user")
-        self.assertTrue(result["answerPresent"])
-        self.assertEqual(result["toolCount"], 1)
-        self.assertEqual(result["totalTokens"], 22)
-
-    def test_mcp_configuration_points_to_owned_foundry_and_managed_identity(self):
-        demo = object.__new__(Demo)
-        demo.config = {"model": "example-model"}
-        demo.state = {
-            "gatewayId": "/subscriptions/example/resourceGroups/playground/providers/Microsoft.ApiManagement/aigateways/playground",
-            "hostname": "gateway.example.invalid",
-            "foundryId": "/subscriptions/example/resourceGroups/playground/providers/Microsoft.CognitiveServices/accounts/playground",
-        }
-        def arm(path, method="GET", body=None, **kwargs):
-            if path == demo.foundry_id:
-                return {"properties": {"endpoint": "https://playground.cognitiveservices.azure.com/"}}
-            self.assertEqual(method, "PUT")
-            return {"properties": {"gatewayEndpoints": [{"url": "https://gateway.example.invalid/default/toolservers/model-tools/mcp"}]}}
-        with patch.object(demo, "arm", side_effect=arm) as calls, patch.object(demo, "save"):
-            demo.configure_mcp()
-        properties = calls.call_args.args[2]["properties"]
-        backend = properties["endpoints"][0]
-        self.assertEqual(backend["credentials"], {
-            "type": "managedIdentity", "managedIdentity": {"resource": "https://cognitiveservices.azure.com"},
-        })
-        self.assertEqual(backend["tools"], ["summarize_text"])
-        spec = json.loads(base64.b64decode(backend["openApi"]["specSource"]["contentBase64"]))
-        self.assertEqual(spec["servers"][0]["url"], "https://playground.cognitiveservices.azure.com")
-        operation = spec["paths"]["/openai/v1/chat/completions"]["post"]
-        self.assertEqual(operation["operationId"], "summarize_text")
-        self.assertEqual(operation["requestBody"]["content"]["application/json"]["schema"]["properties"]["model"]["enum"], ["example-model"])
+from gateway_demo import LIMIT_PROMPT, MODEL_PROMPTS, ROUTING_PROMPT, Demo, DemoError, NoRedirect, native_cost_totals, native_token_totals, require_runtime_url, retry_seconds, runtime_endpoint, secret_values
 
 
 class NativeTokenTests(unittest.TestCase):

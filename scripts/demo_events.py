@@ -28,12 +28,12 @@ SENSITIVE_KEYS = frozenset((
 STAGE_LABELS = {
     "model-access": "AI Gateway model access",
     "request-limits": "Alias request limits",
-    "ai-gateway-mcp": "AI Gateway MCP tool",
+    "ai-gateway-mcp": "Microsoft Learn MCP and Retail Prices conversion",
     "native-activity": "Native gateway spans",
     "routing-weighted": "Weighted model routing",
     "routing-priority": "Priority model routing",
     "native-tokens": "Native token metrics",
-    "reset-demo": "Reset demo",
+    "reset-demo": "Reset playground",
 }
 ACTION_STAGES = {
     "smoke": ("model-access",),
