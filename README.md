@@ -1,247 +1,147 @@
 # AI Gateway Playground
 
-Use a local HTTPS app to test AI Gateway model access, routing, policies, and MCP tools.
-Inspect requests and answers alongside native monitoring.
-Deploy the included templates to create a Foundry account, three model deployments, and the gateway's monitoring resources.
-You need no existing application, gateway, or workspace.
+## Overview
 
+Test model access, routing, request limits, and MCP tools through Azure AI Gateway.
+Inspect prompts, answers, HTTP exchanges, and native monitoring from a local HTTPS application.
+
+Run `azd up` to create a dedicated resource group with AI Gateway, a Microsoft Foundry account,
+three new model deployments, Log Analytics, and Application Insights.
+Each environment owns its models. The deployment does not connect to existing model deployments.
+The application runs on your Windows computer, not on an Azure host.
+
+Use the [user guide](USER-GUIDE.md) for the experiments and [concepts guide](CONCEPTS.md) for the request path.
 This independent project is not an official Microsoft product.
-Check the [AI Gateway resource guidance](https://learn.microsoft.com/azure/api-management/ai-gateway-resource) before deploying.
-Preview APIs and capabilities can change; validate them in your Azure environment.
 
-## Features
+## Architecture
 
-- Test valid credentials and missing/invalid-key rejections.
-- Apply different request limits to aliases that share one catalog model.
-- Route one alias across three models using weights or priorities.
-- Call a Foundry model through an OpenAPI-generated MCP tool.
-- Query native request spans, token counters, and estimated model cost.
-- Read prompts and answers, then expand the HTTP and JSON details.
-- Inspect stage failures and skipped work.
-- Reset local results and restore weighted routing.
-
-Use the fixed prompts for support tickets, project access controls, document quality, and task summaries.
-The app accepts predefined actions; it has no arbitrary command or destination input.
-The Python backend keeps gateway keys and Azure tokens out of the browser.
-
-## Requirements
-
-- Windows, PowerShell 7, Python 3.11 or later, Azure CLI, and Bicep.
-- An Azure subscription with access to AI Gateway Consumption and sufficient model quota.
-- A selected Azure location that supports the gateway and all three configured model deployments.
-- An authenticated Azure CLI user with deployment, role-assignment, resource-read, and monitoring permissions.
-- An existing trusted, exportable `CN=localhost` certificate in the current Windows user's certificate store.
-
-Prepare the CLI session and certificate before starting.
-The scripts preserve the selected subscription and certificate trust; they do not sign you in or create certificates.
-Stop if certificate validation fails.
-
-## Configure an environment
-
-```powershell
-New-Item -ItemType Directory -Path .azure -Force | Out-Null
-Copy-Item config.example.json .azure\config.json
+```mermaid
+flowchart LR
+    browser[Browser on localhost] -->|HTTPS| app[Local Python application]
+    app -->|Runtime key| gateway[AI Gateway]
+    gateway -->|Managed identity| models[Foundry: GPT-5.4, mini, nano]
+    gateway -->|Native OTLP export| insights[Application Insights]
+    app -->|Entra ID: operation spans| insights
+    insights --> logs[Log Analytics]
+    insights --> metrics[Azure Monitor metrics workspace]
+    models -->|Diagnostic logs and metrics| logs
 ```
 
-Replace the placeholders in `.azure\config.json` with your subscription, location, and resource names.
-Choose a dedicated resource group.
-Keep the configuration and generated `.azure\state.json` out of Git.
+The gateway applies access policies and routes requests to the environment's models.
+Its managed identity authenticates to Foundry and the telemetry destination.
+The local server uses your signed-in Azure identity for management and monitoring.
+It keeps Azure tokens and gateway keys out of the browser.
+Azure provisions the native telemetry collection resources in a managed resource group linked to Application Insights
+when the setup hook enables OTLP ingestion.
 
-| Setting | Purpose |
-| --- | --- |
-| `subscriptionId` | Target Azure subscription |
-| `location` | Selected Azure location |
-| `resourceGroupName` | Dedicated resource group owned by this playground |
-| `deploymentName` | Subscription deployment name |
-| `modelDeployments` | Three owned deployments; each entry sets `name`, `model`, `version`, `sku`, and `capacity` |
-| `model` | Primary deployment name for normal and limited aliases and the MCP model tool |
-| `routingModels` | The three configured deployment names used by the routing alias |
-| `allowNativeTokenGap` | Keep `false` to require native token reporting |
+## Prerequisites
 
-Select supported model names, versions, SKUs, and capacities for your subscription.
-Use three distinct returned model names so you can identify each backend in routing results.
-The prepared requests require `reasoning_effort: "none"` and `max_completion_tokens`.
-Choose compatible chat-completions models or adapt the requests.
-Check the example models against current availability and quota before deployment.
+| Requirement | Minimum version or condition |
+|---|---|
+| Windows | Windows 11 for the local application and certificate store |
+| [PowerShell](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) | 7 |
+| [Python](https://www.python.org/downloads/windows/) | 3.11, Windows x64; install x64 Python on ARM64 computers too |
+| [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) | 1.37.0 |
+| [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) | 2.92.0, for infrastructure development and the legacy runner |
+| [Bicep](https://learn.microsoft.com/azure/azure-resource-manager/bicep/install) | 0.48.1 for local infrastructure validation |
+| Local HTTPS certificate | Trusted, exportable `CN=localhost` certificate in the current Windows user's certificate store |
+| Azure subscription | AI Gateway access and model quota in your selected location |
 
-## Deploy
+Use a location that supports AI Gateway, native OTLP ingestion, and all three models.
+The preprovision hook checks model versions, SKUs, and available quota in that location.
+It requires 10 capacity units each for GPT-5.4, GPT-5.4-mini, and GPT-5.4-nano with `GlobalStandard`.
+Quota availability can change before provisioning finishes.
+`GlobalStandard` does not restrict inference processing to the resource's location.
 
-Run from the repository root:
+To create the resource group, your deployment account needs **Contributor** at subscription scope.
+It also needs **Role Based Access Control Administrator**, **User Access Administrator**, or **Owner**
+at the scopes where setup assigns roles. Owner at subscription scope covers both requirements.
+The subscription must have the resource providers registered and permit the preview APIs.
 
-```powershell
-python .\scripts\gateway_demo.py preflight
-python .\scripts\gateway_demo.py preview
-python .\scripts\gateway_demo.py deploy
-python .\scripts\gateway_demo.py configure
-python .\scripts\gateway_demo.py configure-mcp
-python .\scripts\gateway_demo.py configure-routing
-```
+The launcher uses an existing trusted certificate. It does not create certificates or change trust.
+Prepare the certificate as part of your workstation prerequisites.
+Python dependencies come from your configured package source.
+The bootstrap creates `.venv` and installs the pinned lock file.
+On Windows ARM64, it uses an installed x64 Python runtime registered with the Python launcher.
 
-Use the template to create a dedicated resource group containing Foundry models, a Log Analytics workspace, AI Gateway, and Application Insights.
-Deployment grants the gateway's managed identity scoped model access.
-Run the configure commands to create aliases, policies, telemetry export, the MCP tool, and routing.
-Inspect preflight and preview results before committing to the deployment and its charges.
+## Getting started
 
-The current resource type is `Microsoft.ApiManagement/aigateways`, with the `Consumption` SKU.
-Provisioning uses `2026-09-01-preview`.
-Model assets use `2026-05-01`; alias policies and exporters use `2025-09-01-preview`.
-The template suppresses BCP081 because the bundled Bicep catalog lacks the gateway type.
-Run Azure validation before deployment.
+1. Install the prerequisites.
+2. Sign in with `azd auth login`.
+3. Run `azd up` from the repository root. Answer the environment, subscription, and location prompts.
+4. Run `pwsh .\scripts\start-presenter.ps1` and use the browser tab that it opens.
 
-Setup configures native OpenTelemetry Protocol (OTLP) export to Application Insights, including monitoring access.
-Cloud payload capture defaults to `false`.
-Review privacy, access, and retention requirements before enabling request/response capture.
+Keep the server terminal open.
+The deployment hooks configure the model aliases, limits, MCP tool, routing, and native telemetry.
+They write the application settings and state under `.azure/<environment>/`, which Git ignores.
+The launcher uses the selected azd environment.
+Run `azd up` again to update that environment.
 
-## MCP model tool
+## Monitoring
 
-Call `summarize_text` in the `model` namespace of the `model-tools` MCP server.
-The tool calls `POST /openai/v1/chat/completions` on the playground's Foundry account using your configured `model` deployment.
-You need no separate tool-hosting service.
+Open the **Resources** page in the application for links to the environment's monitoring resources.
+Use **Check Setup** to test model access, request limits, MCP, routing, and native activity/token reporting.
 
-The prepared `tools/call` arguments are:
+| View | What to inspect |
+|---|---|
+| Application Insights, Application Map | The local application's `ai-gateway-playground-presenter` operation spans |
+| Application Insights, transaction search | Local operations; inspect gateway Server spans in `OTelSpans` |
+| Log Analytics | Foundry diagnostics and gateway activity scoped to this Application Insights resource |
+| Application, Monitoring page | Native token counters and model cost from the linked metrics workspace |
 
-```json
-{
-  "model": "<configured-primary-deployment>",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Summarize: A project has three open tasks. Two need owners and one needs a due date. State the next action in one sentence."
-    }
-  ],
-  "max_completion_tokens": 96,
-  "reasoning_effort": "none"
-}
-```
+Native token and cost values are the latest cumulative samples within one hour.
+They are not hourly spend or billing totals.
+Gateway cost estimates exclude gateway charges.
+Treat **Not reported** as missing data, not zero cost.
+Cloud payload capture stays disabled.
+Request and response evidence stays in the local server's memory for the session.
 
-Inspect session initialization, tool discovery, and invocation in the request history.
-Read the answer from the returned chat-completions JSON in `structuredContent` or a JSON text block.
-Expand **Full JSON and HTTP details** to inspect the captured envelope.
-Check the tool result as well as the HTTP status; an HTTP 200 can contain a tool error.
+This solution calls model deployments directly through the gateway.
+It creates no Foundry project or agent, so there is no Foundry agent trace view.
 
-Use gateway runtime keys for prepared model and MCP calls.
-The gateway uses managed identity with audience `https://cognitiveservices.azure.com` for Foundry access.
-Delegated OAuth, per-user tool entitlements, and remote MCP federation need separate implementation and validation.
+## Identities and roles
 
-## Start the app
+| Identity | Type | Role | Scope | Reason and narrower option |
+|---|---|---|---|---|
+| Gateway | System-assigned managed identity | Cognitive Services OpenAI User | Owned Foundry account | Invoke the three models. Account scope covers the shared model provider without access to other accounts. This built-in role also permits model metadata reads. |
+| Gateway | Managed identity | Monitoring Metrics Publisher | Application Insights and its native Data Collection Rule | Send telemetry. The native OTLP endpoint requires the rule assignment; neither assignment grants access to other destinations. |
+| Local developer | Human | Monitoring Metrics Publisher | Application Insights | Send local operation spans with Entra ID. Reader roles cannot ingest telemetry. |
+| Deployment account | Human | Contributor plus a role-assignment administrator role | Subscription for group creation; owned resources for setup | Create and configure the environment and its role assignments. Subscription-level group creation cannot use a resource group role before that group exists. |
+| Monitoring reader | Human | Log Analytics Reader and Monitoring Reader | Owned log and metrics workspaces | Read logs and native metrics without write access. The deployment account's existing management roles cover these reads; setup does not grant another subscription-wide role. |
 
-Create an isolated Python environment and install the pinned dependencies from your approved package source:
+Foundry and Application Insights reject key-based authentication.
+The gateway uses its system-assigned identity from the existing Bicep.
+The prepared runtime requests use a gateway key, which the server obtains in memory.
+An Azure-hosted application needs its own managed identity and browser sign-in design.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-presenter.lock.txt
-pwsh .\scripts\start-presenter.ps1
-```
+## Clean up
 
-Use the authorized browser tab that the launcher opens.
-Keep the terminal open while using the app.
-The server binds to `127.0.0.1` and serves HTTPS at its `localhost` URL.
-Supply `-Port` to choose a port instead of using an available one.
+Run `azd down --purge` from the repository root.
+Review the selected environment before confirming.
+This deletes the environment's resources and purges supported soft-deleted resources.
+The postdown hook removes only that environment's generated local gateway configuration and state.
+Other environments and existing model deployments remain unchanged.
 
-The app protects its launch capability with Windows user-scoped protection.
-It uses Secure, HttpOnly, SameSite=Strict cookies, same-origin checks, and CSRF protection.
-This authorization covers the local app; hosted browser Entra authentication requires a different design.
-The server lasts eight hours, and browser authorization lasts two hours.
-Run the launcher again to renew browser authorization.
+## Known limitations
 
-Use the [user guide](USER-GUIDE.md) for the experiment sequence.
-The **(?)** panel contains operator details and page notes.
-Keep resource links and their download private because they contain deployment identifiers.
+| Limitation | Production alternative |
+|---|---|
+| AI Gateway and native OTLP features use preview APIs. | Check the [current resource contract](https://learn.microsoft.com/azure/api-management/ai-gateway-resource), availability, pricing, and support requirements before deployment. |
+| The application needs Windows and an existing trusted localhost certificate. | Host the application with managed HTTPS and Entra browser authentication. |
+| Runtime requests share a gateway key that expires after three days. | Configure individual gateway identities and credential lifecycle management. |
+| Request limits use an IP counter and can overshoot. | Design and test per-person or per-group allowances and financial controls. |
+| Routing checks use healthy models. | Test backend outages before relying on failover. |
+| AI Gateway does not support diagnostic settings. | Use its native OTLP exporter for activity, token, and cost monitoring. |
+| Cloud payload capture is disabled; the local application displays model content. | Review privacy, access, redaction, and retention before enabling cloud content capture. |
+| The resource group contains billable models and monitoring resources. | Review prices, quotas, ingestion, and retention for your selected configuration. |
 
-## Monitoring and evidence
+## Troubleshooting
 
-Inspect these native gateway signals:
+If quota preflight fails, select a location with capacity or request quota.
+The hook does not switch your location or reuse another account's deployments.
+If setup fails after provisioning, fix the reported error and run `azd up` again.
+Azure sign-in remains a separate user action; the hooks never start an interactive sign-in.
 
-| Signal | Source | Interpretation |
-| --- | --- | --- |
-| Gateway requests | Component-scoped `OTelSpans` with Server kind | Request activity, status, duration, and trace identifiers |
-| Token usage | `azure.ai_gateway.client.token.usage` | Latest cumulative samples seen within one hour |
-| Model cost | `azure.ai_gateway.client.token.cost` | Gateway-estimated model cost with the native currency label |
-| Local app operations | `AppDependencies`, role `ai-gateway-playground-presenter` | Local command spans, separate from gateway traffic |
-
-Read token and cost samples as cumulative counters, not hourly spend or billing-period totals.
-Native cost estimates exclude gateway service charges; use billing records for invoiced charges.
-The app excludes overlapping total/component series from its sums and shows missing-price flags.
-Treat **Not reported** as missing cost data, not zero cost.
-Configuration changes can reset these counters.
-
-The app holds request/response evidence in server memory for the current session.
-The runner emits JSON-line events after redacting credentials, known deployment identifiers, session headers, and email addresses.
-It captures up to 180 exchanges, 16,384 characters per body, and 768,000 body characters per run.
-Check truncation notices before treating a body as complete.
-The request history excludes Azure management responses.
-Configure cloud payload capture as a separate gateway setting.
-
-## Limits and cleanup
-
-Use the rate experiment to test an IP counter, which can overshoot its configured request count.
-Implement person/group allowances and financial caps as separate controls.
-Test backend outages before relying on failover; the routing experiments check healthy model selection.
-The MCP check requires a non-empty model answer from a successful tool call.
-
-Run **Check Setup** to check access, limits, MCP, both routing modes, and native activity/token reporting.
-Treat a tolerated native token gap as a partial result.
-
-Use Reset to clear local results and restore weighted routing.
-Reset preserves Azure resources, stored logs, and service-side quotas.
-
-```powershell
-python .\scripts\gateway_demo.py inventory
-```
-
-Review the ownership inventory before deleting the dedicated environment.
-This repository provides no `azd` project or `azd down` workflow.
-Decide which resources and stored payload data to remove before starting cleanup.
-
-### Costs
-
-Review gateway, model, monitoring ingestion, and retention prices before deployment.
-Check quota and charges for the selected model SKUs and capacities.
-Weighted routing sends 50 requests per sample; priority routing sends 10.
-Check Setup runs both modes alongside the other experiments.
-Additional runs can increase usage.
-
-Closing the app or selecting Reset leaves cloud resources in place and does not stop charges.
-Use Azure Cost Management and billing records to review those charges.
-
-## Checks
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -q
-node --test tests\test_exchange_content.cjs
-node --check web\app.js
-node --check web\demo_content.js
-az bicep build --file infra\main.bicep --stdout
-```
-
-Run the HTTPS checks against a configured, running app:
-
-```powershell
-$env:PRESENTER_E2E = '1'
-.\.venv\Scripts\python.exe -m unittest discover -s tests -q
-Remove-Item Env:PRESENTER_E2E
-```
-
-The opt-in HTTPS checks skip without an Azure environment.
-Validate the Azure integration in a deployed environment in addition to running local unit tests.
-
-## Documentation
-
-- [User guide](USER-GUIDE.md)
-- [AI Gateway concepts](CONCEPTS.md)
-- [Microsoft AI Gateway documentation](https://learn.microsoft.com/azure/api-management/ai-gateway-resource)
-- [Azure AI Gateway samples](https://github.com/Azure-Samples/AI-Gateway)
-- [AI Gateway portal documentation](https://ai.gateway.azure.com/docs)
-
-The implementation follows Microsoft documentation and Azure sample patterns for gateway authentication and telemetry.
-It uses the native portal's contract for alias routing and cost metrics.
-Keep recordings, evidence exports, configuration, certificates, and resource-link downloads out of Git.
-
-## Related project
-
-[AI Observability Demo](https://github.com/gjlumsden/ai-observability-demo) covers a separate implementation.
-You can use this playground without deploying that project.
-
-## License
-
-[MIT](LICENSE).
+If the launcher reports a certificate error, stop and check the workstation certificate prerequisite.
+Do not bypass TLS validation.
+Keep `.azure` private because it contains deployment identifiers and local diagnostics.

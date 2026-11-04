@@ -270,6 +270,37 @@ def az(arguments: list[str]) -> object:
         raise DemoError("Azure CLI did not return valid JSON.") from error
 
 
+def azd(arguments: list[str]) -> object:
+    executable = shutil.which("azd")
+    if not executable:
+        raise DemoError("Azure Developer CLI is required.")
+    result = subprocess.run(
+        [executable, *arguments, "--no-prompt", "--output", "json"],
+        capture_output=True, text=True, encoding="utf-8-sig", cwd=ROOT, check=False,
+        env=dict(
+            os.environ, PYTHONIOENCODING="utf-8", AZURE_EXTENSION_USE_DYNAMIC_INSTALL="no",
+            AZURE_CORE_COLLECT_TELEMETRY="no",
+        ),
+    )
+    if result.returncode:
+        error_file = ROOT / ".azure" / "last-azd-error.txt"
+        error_file.parent.mkdir(exist_ok=True)
+        error_file.write_text(result.stderr, encoding="utf-8")
+        raise DemoError("Azure Developer CLI failed. Inspect .azure/last-azd-error.txt.")
+    return json.loads(result.stdout) if result.stdout.strip() else None
+
+
+def default_config_path() -> Path:
+    local = ROOT / ".azure"
+    environment = os.environ.get("AZURE_ENV_NAME")
+    project_config = local / "config.json"
+    if not environment and project_config.exists():
+        environment = json.loads(project_config.read_text(encoding="utf-8-sig")).get("defaultEnvironment")
+    if environment:
+        return local / environment / "gateway-config.json"
+    return project_config
+
+
 def request(
     method: str, url: str, headers: dict[str, str], body: object = None,
 ) -> tuple[int, dict[str, str], object]:
@@ -313,9 +344,9 @@ class Demo:
         try:
             self.config = json.loads(config_path.read_text(encoding="utf-8-sig"))
         except (OSError, json.JSONDecodeError) as error:
-            raise DemoError("Provide a valid ignored .azure/config.json.") from error
+            raise DemoError("Run azd up or provide a valid ignored gateway configuration with --config.") from error
         self.subscription = str(uuid.UUID(self.config["subscriptionId"]))
-        self.state_path = ROOT / ".azure" / "state.json"
+        self.state_path = config_path.parent / "state.json"
         self.tokens: dict[str, str] = {}
         self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else {}
         EVENTS.configure(self.config, self.state)
@@ -367,6 +398,13 @@ class Demo:
 
     def token(self, audience: str = "https://management.azure.com/") -> str:
         if audience not in self.tokens:
+            if self.config.get("azdEnvironment"):
+                result = azd([
+                    "auth", "token", "--scope", audience.rstrip("/") + "/.default",
+                    "--tenant-id", self.config["tenantId"], "-e", self.config["azdEnvironment"],
+                ])
+                self.tokens[audience] = result["token"]
+                return self.tokens[audience]
             result = az([
                 "account", "get-access-token", "--resource", audience,
                 "--subscription", self.subscription,
@@ -1574,7 +1612,7 @@ def main() -> int:
         "queries", "inventory", "verify", "monitoring", "reset-demo", "configure-telemetry", "configure-aliases",
         "configure-routing", "routing-weighted", "routing-priority", "cleanup-legacy-telemetry",
     ))
-    parser.add_argument("--config", type=Path, default=ROOT / ".azure" / "config.json")
+    parser.add_argument("--config", type=Path, default=default_config_path())
     args = parser.parse_args()
     try:
         demo = Demo(args.config)

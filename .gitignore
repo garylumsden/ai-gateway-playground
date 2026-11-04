@@ -8,6 +8,8 @@ __pycache__/
 *.log
 infra/*.json
 !infra/*.example.json
+!infra/main.parameters.json
+preflight-report.md
 test-results/
 .playwright-mcp/
 .venv/

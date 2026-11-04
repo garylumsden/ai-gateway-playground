@@ -1,26 +1,32 @@
 targetScope = 'subscription'
 
+import { ModelDeployment } from 'modules/gateway.bicep'
+
+@description('Azure Developer CLI environment name.')
+param environmentName string = 'playground'
+
 @description('Selected Azure location that supports AI Gateway.')
 param location string
 
 @description('Resource group owned by this playground.')
-param resourceGroupName string = 'rg-ai-gateway-playground'
+param resourceGroupName string = 'rg-${environmentName}-${uniqueString(subscription().subscriptionId, environmentName, location)}'
+
+@description('Object ID of the developer who runs the local application.')
+param principalId string = ''
 
 @description('Three distinct model deployments to create in the playground Foundry account.')
-param modelDeployments {
-  name: string
-  model: string
-  version: string
-  sku: string
-  capacity: int
-}[]
+param modelDeployments ModelDeployment[] = loadJsonContent('../config.example.json').modelDeployments
 
-resource demoGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
+var resourceToken = uniqueString(subscription().subscriptionId, environmentName, location)
+var tags = {
+  'azd-env-name': environmentName
+  purpose: 'ai-gateway-playground'
+}
+
+resource demoGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = {
   name: resourceGroupName
   location: location
-  tags: {
-    purpose: 'ai-gateway-playground'
-  }
+  tags: tags
 }
 
 module gateway 'modules/gateway.bicep' = {
@@ -28,6 +34,9 @@ module gateway 'modules/gateway.bicep' = {
   params: {
     location: location
     modelDeployments: modelDeployments
+    resourceToken: resourceToken
+    principalId: principalId
+    tags: tags
   }
 }
 
@@ -48,3 +57,6 @@ output foundryId string = gateway.outputs.foundryId
 output foundryName string = gateway.outputs.foundryName
 output logWorkspaceId string = gateway.outputs.logWorkspaceId
 output logWorkspaceName string = gateway.outputs.logWorkspaceName
+output AZURE_RESOURCE_GROUP string = demoGroup.name
+output AZURE_MODEL_DEPLOYMENTS array = modelDeployments
+output AZURE_TENANT_ID string = tenant().tenantId

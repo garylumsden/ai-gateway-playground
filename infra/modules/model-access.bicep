@@ -10,6 +10,7 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
 
 var openAiUserRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
+  // Cognitive Services OpenAI User: https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/ai-machine-learning
   '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 )
 

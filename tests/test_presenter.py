@@ -11,10 +11,23 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from gateway_demo import DemoError
-from presenter import ACTIONS, Presenter, outcome, portal, protect_local, require_local_origin, result_summary
+from presenter import ACTIONS, Presenter, outcome, portal, protect_local, require_local_origin, result_summary, verify_operator
 
 
 class PresenterRulesTests(unittest.TestCase):
+    def test_azd_operator_uses_the_current_user_profile(self):
+        demo = SimpleNamespace(
+            config={"azdEnvironment": "first", "tenantId": "directory"},
+            prefix="/subscriptions/example",
+            arm=lambda *args, **kwargs: {"displayName": "Project subscription"},
+        )
+        with patch("presenter.azd", return_value={"token": "test-token"}) as authenticate:
+            with patch("presenter.request", return_value=(200, {}, {"userPrincipalName": "operator@example.invalid"})):
+                operator = verify_operator(demo)
+        self.assertEqual(operator["name"], "operator@example.invalid")
+        self.assertEqual(operator["type"], "Azure Developer CLI user")
+        self.assertIn("https://graph.microsoft.com/.default", authenticate.call_args.args[0])
+
     def test_no_deployment_configuration_or_arbitrary_command_actions(self):
         for forbidden in ("deploy", "configure", "configure-mcp", "configure-telemetry", "configure-aliases", "configure-routing", "cleanup-legacy-telemetry", "preflight", "preview", "shell", "smoke;whoami"):
             self.assertNotIn(forbidden, ACTIONS)

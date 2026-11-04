@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: ai-gateway-playground
+requiredVersions:
+  azd: ">= 1.37.0"
+infra:
+  provider: bicep
+  path: infra
+  module: main
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: python scripts\azd\bootstrap.py prepare
+    posix:
+      shell: sh
+      run: python3 scripts/azd/bootstrap.py prepare
+  postprovision:
+    windows:
+      shell: pwsh
+      run: python scripts\azd\bootstrap.py configure
+    posix:
+      shell: sh
+      run: python3 scripts/azd/bootstrap.py configure
+  postdown:
+    windows:
+      shell: pwsh
+      run: python scripts\azd\bootstrap.py clean
+    posix:
+      shell: sh
+      run: python3 scripts/azd/bootstrap.py clean

@@ -10,11 +10,11 @@ pwsh .\scripts\start-presenter.ps1
 
 Use the browser tab that the launcher authorizes.
 Keep the server terminal open while you experiment.
-If the certificate is untrusted, stop and complete the README certificate setup.
+If the certificate is untrusted, stop and check the README certificate prerequisite.
 Do not bypass certificate validation.
 
 Open **(?)** for page help, account details, and resource links.
-Confirm the Azure CLI account and subscription before running experiments.
+Confirm the signed-in azd account and selected environment before running experiments.
 Keep resource links and their download private; they contain deployment identifiers.
 
 ## Explore the experiments
@@ -44,7 +44,7 @@ Expect three project answers and rejections for missing/invalid credentials.
 Treat rejections as expected for those two credential checks.
 A rejected request with valid credentials is a failure.
 
-Use your Azure CLI identity for management and monitoring.
+Use your signed-in azd identity for management and monitoring.
 The prepared client sends runtime keys to the gateway, which uses managed identity for Foundry access.
 Hosted browser identity and group-based model access require separate implementation.
 

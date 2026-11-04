@@ -8,11 +8,63 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from gateway_demo import LIMITED_ALIAS, LIMIT_PROMPT, MODEL_ALIAS, MODEL_PROMPTS, ROUTING_ALIAS, ROUTING_PROMPT, Demo, DemoError
+from gateway_demo import LIMITED_ALIAS, LIMIT_PROMPT, MODEL_ALIAS, MODEL_PROMPTS, ROUTING_ALIAS, ROUTING_PROMPT, Demo, DemoError, default_config_path
+from gateway_demo import azd
 from presenter import ENTROPY, TELEMETRY_ROLE, deployed_resources
 
 
 class PublicDefaultsTests(unittest.TestCase):
+    def test_azd_subprocess_receives_an_explicit_environment(self):
+        response = SimpleNamespace(returncode=0, stdout="{}", stderr="")
+        with patch("gateway_demo.shutil.which", return_value="azd.exe"):
+            with patch("gateway_demo.subprocess.run", return_value=response) as run:
+                with patch.dict("os.environ", {"AZD_PROCESS_TEST": "inherited"}):
+                    azd(["auth", "token"])
+        self.assertEqual(run.call_args.kwargs["env"]["AZD_PROCESS_TEST"], "inherited")
+        self.assertEqual(run.call_args.kwargs["env"]["PYTHONIOENCODING"], "utf-8")
+        self.assertEqual(run.call_args.kwargs["env"]["AZURE_CORE_COLLECT_TELEMETRY"], "no")
+
+    def test_selected_azd_environment_supplies_the_application_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".azure").mkdir()
+            (root / ".azure" / "config.json").write_text(
+                json.dumps({"defaultEnvironment": "first"}), encoding="utf-8",
+            )
+            with patch("gateway_demo.ROOT", root), patch.dict("os.environ", {}, clear=True):
+                self.assertEqual(default_config_path(), root / ".azure" / "first" / "gateway-config.json")
+                with patch.dict("os.environ", {"AZURE_ENV_NAME": "second"}):
+                    self.assertEqual(default_config_path(), root / ".azure" / "second" / "gateway-config.json")
+
+    def test_explicit_config_keeps_state_in_its_own_environment(self):
+        config = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+        config.update({"subscriptionId": "00000000-0000-0000-0000-000000000000", "location": "example-location"})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first"
+            second = root / "second"
+            first.mkdir()
+            second.mkdir()
+            for path in (first, second):
+                (path / "gateway-config.json").write_text(json.dumps(config), encoding="utf-8")
+            one = Demo(first / "gateway-config.json")
+            one.state = {"gatewayId": "first-gateway"}
+            one.save()
+            two = Demo(second / "gateway-config.json")
+            self.assertEqual(two.state, {})
+            self.assertEqual(Demo(first / "gateway-config.json").state["gatewayId"], "first-gateway")
+
+    def test_azd_configuration_uses_azd_authentication_without_azure_cli_fallback(self):
+        demo = object.__new__(Demo)
+        demo.config = {"azdEnvironment": "first", "tenantId": "directory"}
+        demo.tokens = {}
+        with patch("gateway_demo.azd", return_value={"token": "test-token"}) as authenticate:
+            self.assertEqual(demo.token("https://monitor.azure.com"), "test-token")
+        authenticate.assert_called_once_with([
+            "auth", "token", "--scope", "https://monitor.azure.com/.default",
+            "--tenant-id", "directory", "-e", "first",
+        ])
+
     def test_example_configuration_uses_placeholders_for_private_resources(self):
         config = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
         for value in (config["subscriptionId"], config["location"]):

@@ -36,7 +36,7 @@ Configure access at each connection:
 | Application to gateway | Authenticate and authorize runtime requests |
 | Gateway to backend | Grant the gateway permission to call a model or tool |
 
-Use the Azure CLI identity for management and monitoring.
+Use the signed-in azd identity for management and monitoring.
 Prepared clients send runtime keys to the gateway, which uses managed identity for Foundry access.
 Configure user-level gateway authorization as a separate control.
 Users who share a key share its identity.

@@ -1,3 +1,5 @@
 cryptography==50.0.2
+azure-identity==1.26.0
 azure-monitor-opentelemetry-exporter==1.0.0b58
 opentelemetry-sdk==1.45.1
+pydantic==2.14.1

@@ -133,7 +133,7 @@ class LivePresenterHttpTests(unittest.TestCase):
     def test_context_contains_real_links_but_no_cloud_credentials(self):
         status, _, result = self.call("/api/context")
         self.assertEqual(status, 200)
-        self.assertEqual(result["operator"]["type"], "Azure CLI user")
+        self.assertIn(result["operator"]["type"], ("Azure CLI user", "Azure Developer CLI user"))
         self.assertEqual({link["id"] for link in result["resources"]}, {
             "newGateway", "gatewayPortal", "newInsights", "newGroup", "workspace", "foundry", "gatewayAudit",
         })

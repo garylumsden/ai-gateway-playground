@@ -1,4 +1,4 @@
-"""Local HTTPS presenter using the operator's approved Azure CLI user identity."""
+"""Local HTTPS presenter using the operator's signed-in Azure user identity."""
 
 from __future__ import annotations
 
@@ -25,12 +25,14 @@ from urllib.parse import urlparse
 import uuid
 import webbrowser
 
-from gateway_demo import Demo, DemoError, ROOT, ROUTING_WEIGHTS, az
+from pydantic import BaseModel
+
+from gateway_demo import Demo, DemoError, ROOT, ROUTING_WEIGHTS, az, azd, default_config_path, request
 from redaction import redact
 from demo_events import ACTION_STAGES, STAGE_LABELS, DemoEvents, PREFIX, apply_event
 
 WEB = ROOT / "web"
-LOCAL = ROOT / ".azure" / "presenter"
+LOCAL = default_config_path().parent / "presenter"
 COOKIE = "__Host-gateway-presenter"
 ACTIONS = frozenset(("smoke", "rate", "mcp", "activity", "telemetry", "monitoring", "verify", "routing-weighted", "routing-priority", "reset-demo"))
 LIFETIME = 8 * 60 * 60
@@ -41,6 +43,10 @@ ENTROPY = b"ai-gateway-playground-presenter-local-session-v1"
 
 class DataBlob(ctypes.Structure):
     _fields_ = [("length", wintypes.DWORD), ("data", ctypes.POINTER(ctypes.c_ubyte))]
+
+
+class SignedInUser(BaseModel):
+    userPrincipalName: str
 
 
 def protect_local(value: bytes, *, decrypt: bool = False) -> bytes:
@@ -109,7 +115,29 @@ def tls_context() -> ssl.SSLContext:
         pfx_path.unlink(missing_ok=True)
 
 
+def verify_azd_operator(demo: Demo) -> dict:
+    subscription = demo.arm(demo.prefix, version="2022-12-01")
+    # Read a fresh profile so an azd account switch does not reuse cached operator metadata.
+    result = azd([
+        "auth", "token", "--scope", "https://graph.microsoft.com/.default",
+        "--tenant-id", demo.config["tenantId"], "-e", demo.config["azdEnvironment"],
+    ])
+    status, _, profile = request(
+        "GET", "https://graph.microsoft.com/v1.0/me?$select=userPrincipalName",
+        {"Authorization": "Bearer " + result["token"]},
+    )
+    if status != 200:
+        raise DemoError(f"Could not read the signed-in azd user: HTTP {status}.")
+    user = SignedInUser.model_validate(profile)
+    return {
+        "name": user.userPrincipalName, "tenantId": demo.config["tenantId"],
+        "subscriptionName": subscription["displayName"], "type": "Azure Developer CLI user",
+    }
+
+
 def verify_operator(demo: Demo) -> dict:
+    if demo.config.get("azdEnvironment"):
+        return verify_azd_operator(demo)
     account = az(["account", "show", "--subscription", demo.subscription])
     if not isinstance(account, dict) or account.get("id", "").lower() != demo.subscription.lower():
         raise DemoError("Azure CLI is not using the configured subscription.")
@@ -184,11 +212,15 @@ def result_summary(action: str, status: str, state: dict) -> object:
 
 class Presenter:
     def __init__(self, config: Path):
+        from azure.identity import AzureCliCredential, AzureDeveloperCliCredential
         from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 
+        # CLI diagnostic uploads can exceed azd's nested credential timeout; application tracing stays enabled.
+        os.environ["AZURE_CORE_COLLECT_TELEMETRY"] = "no"
         self.demo = Demo(config)
         self.operator = verify_operator(self.demo)
         gateway = self.demo.arm(self.demo.gateway_id, version="2026-09-01-preview")
@@ -196,11 +228,18 @@ class Presenter:
             raise DemoError("The configured gateway is not the current AI Gateway resource type.")
         insights = self.demo.arm(self.demo.state["applicationInsightsId"], version="2020-02-02")
         self.links = deployed_resources(self.demo)
-        self.provider = TracerProvider(resource=Resource({
-            "service.name": TELEMETRY_ROLE, "service.instance.id": "local",
-        }))
+        credential = (
+            AzureDeveloperCliCredential(tenant_id=self.demo.config["tenantId"], process_timeout=60)
+            if self.demo.config.get("azdEnvironment") else AzureCliCredential()
+        )
+        self.provider = TracerProvider(
+            sampler=ALWAYS_ON,
+            resource=Resource({"service.name": TELEMETRY_ROLE, "service.instance.id": "local"}),
+        )
         self.provider.add_span_processor(BatchSpanProcessor(AzureMonitorTraceExporter(
             connection_string=insights["properties"]["ConnectionString"],
+            credential=credential,
+            tracer_provider=self.provider,
             disable_offline_storage=True,
         )))
         self.tracer = self.provider.get_tracer("gateway-presenter")
@@ -224,7 +263,7 @@ class Presenter:
             "aiGatewayGroup": self.demo.config["resourceGroupName"],
             "model": self.demo.config["model"],
             "sku": self.demo.state["sku"],
-            "identityMode": "Local server using the approved Azure CLI user. This is not browser Entra sign-in.",
+            "identityMode": "Local server using the signed-in Azure user. This is not browser Entra sign-in.",
             "telemetry": "Presenter internal spans and local request/response evidence. Native metrics come from the gateway.",
             "busy": self.busy,
             "resetAt": state.get("presenterResetAt"),
@@ -333,7 +372,7 @@ class Presenter:
                 span.set_status(Status(StatusCode.ERROR))
                 current = verify_operator(self.demo)
                 if current["name"] != self.operator["name"] or current["tenantId"] != self.operator["tenantId"]:
-                    raise DemoError("The Azure CLI user changed. Restart the presenter under the approved user.")
+                    raise DemoError("The signed-in Azure user changed. Restart the presenter under the approved user.")
                 result = self.execute(job)
                 state = json.loads(self.demo.state_path.read_text(encoding="utf-8"))
                 status = outcome(action, result.returncode, result.stdout, result.stderr)
@@ -560,17 +599,19 @@ def open_existing() -> bool:
 
 
 def main() -> int:
+    global LOCAL
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--config", type=Path, default=ROOT / ".azure" / "config.json")
+    parser.add_argument("--config", type=Path, default=default_config_path())
     args = parser.parse_args()
+    LOCAL = args.config.resolve().parent / "presenter"
     if not 0 <= args.port <= 65535:
         parser.error("Port must be between 0 and 65535.")
     try:
         if not args.no_browser and open_existing():
             return 0
-        print("Checking the Azure CLI user and exact deployed resource links.", flush=True)
+        print("Checking the signed-in Azure user and deployed resource links.", flush=True)
         app = Presenter(args.config.resolve())
         context = tls_context()
         server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
@@ -583,9 +624,9 @@ def main() -> int:
             "protectedLaunchToken": base64.b64encode(protect_local(app.launch_token.encode())).decode(),
         }
         (LOCAL / "server.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
-        (ROOT / ".azure" / "PRESENTER-LIVE.md").write_text(app.private_runbook(), encoding="utf-8")
+        (args.config.resolve().parent / "PRESENTER-LIVE.md").write_text(app.private_runbook(), encoding="utf-8")
         print("Presenter ready: " + app.origin, flush=True)
-        print("Azure CLI user verified. This app uses local browser authorization.", flush=True)
+        print("Azure user verified. This app uses local browser authorization.", flush=True)
         print("Azure tokens and gateway keys stay on the server. Press Ctrl+C to stop.", flush=True)
         if not args.no_browser:
             if not webbrowser.open(launch_url(info)):

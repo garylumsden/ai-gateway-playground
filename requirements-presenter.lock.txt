@@ -1,3 +1,4 @@
+annotated-types==0.8.0
 azure-core==1.41.0
 azure-identity==1.26.0
 azure-monitor-opentelemetry-exporter==1.0.0b58
@@ -16,8 +17,11 @@ opentelemetry-sdk==1.45.1
 opentelemetry-semantic-conventions==0.66b1
 psutil==7.2.2
 pycparser==3.11
+pydantic==2.14.1
+pydantic_core==2.50.1
 PyJWT==2.15.1
 requests==2.34.2
 requests-oauthlib==2.0.0
+typing-inspection==0.4.4
 typing_extensions==4.16.0
 urllib3==2.8.0
